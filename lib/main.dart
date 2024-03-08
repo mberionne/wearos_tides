@@ -19,6 +19,21 @@ enum AppState {
   errorParsing,
 }
 
+class TideData {
+  TideData({required this.station, required this.heights});
+  final String station;
+  final List<double> heights;
+
+  factory TideData.fromJson(Map<String, dynamic> data) {
+    final station = data['station']; // dynamic
+    List<double> heights = []; // dynamic
+    for (final height in data['heights']) {
+      heights.add(height['height']);
+    }
+    return TideData(station: station ?? "", heights: heights);
+  }
+}
+
 void main() {
   runApp(const MyApp());
 }
@@ -32,7 +47,7 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Tides',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.black),
         useMaterial3: true,
       ),
       home: const MainPage(),
@@ -51,7 +66,7 @@ class MainPage extends StatefulWidget {
 
 class _MainPageState extends State<MainPage> {
   AppState _appState = AppState.init;
-  String _errorMessage = "";
+  String _debugMessage = "";
   Location location = Location();
 
   void _mainFlow() async {
@@ -63,17 +78,18 @@ class _MainPageState extends State<MainPage> {
       String body = _getCacheIfValid(prefs);
       if (body.isEmpty) {
         _moveTo(AppState.gettingData);
-         body = await _fetchDataFromServer(locationData);
+        body = await _fetchDataFromServer(locationData);
         _setCache(prefs, body);
       }
       _moveTo(AppState.parsingData);
-      List<double> heights = _parseBody(body);
+      TideData tideData = _parseBody(body);
+      _debugMessage = "Heights: ${tideData.heights}";
       _moveTo(AppState.ready);
     } on TimeoutException catch (_) {
       _moveTo(AppState.errorHttpTimeout);
     } catch (err) {
-      _errorMessage = "$err";
-      switch(_appState) {
+      _debugMessage = "$err";
+      switch (_appState) {
         case AppState.gettingLocation:
           _moveTo(AppState.errorNoLocation);
           break;
@@ -115,28 +131,21 @@ class _MainPageState extends State<MainPage> {
     prefs.setString('value', value);
   }
 
-  List<double> _parseBody(String body) {
+  TideData _parseBody(String body) {
     Map<String, dynamic> map = jsonDecode(body);
     int result = map['status'];
     if (result != 200) {
-      throw Exception("Invalid result received");
+      throw Exception("Invalid result received ($result)");
     }
-
-    final heights = <double>[];
-    final points = map['heights'];
-    for(final point in points){
-      heights.add(point['height']);
-    }
-    return heights;
+    return TideData.fromJson(map);
   }
 
   Uri _composeUri(LocationData locationData) {
-    return Uri.parse(
-       "https://www.worldtides.info/api/v3?"
-       "heights&days=1&date=today&datum=CD&"
-       "lat={$locationData.latitude}&lon={$locationData.longitude}&"
-       "step=3600&"
-       "key=8280c866-8a82-44e8-8943-c542836f15af");
+    return Uri.parse("https://www.worldtides.info/api/v3?"
+        "heights&days=1&date=today&datum=CD&"
+        "lat={$locationData.latitude}&lon={$locationData.longitude}&"
+        "step=3600&"
+        "key=8280c866-8a82-44e8-8943-c542836f15af");
   }
 
   Future<String> _fetchDataFromServer(LocationData locationData) async {
@@ -175,9 +184,7 @@ class _MainPageState extends State<MainPage> {
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            showState()
-          ],
+          children: showState(),
         ),
       ),
       // TO DO: to be removed - Only used for testing
@@ -189,36 +196,56 @@ class _MainPageState extends State<MainPage> {
     );
   }
 
-  Widget showState() {
+  List<Widget> showState() {
+    var widgets = <Widget>[];
     switch (_appState) {
       case AppState.init:
       case AppState.gettingLocation:
       case AppState.gettingData:
       case AppState.parsingData:
-        return Column(
-          children: <Widget>[
-            const SizedBox(
-              width: 30,
-              height: 30,
-              child: CircularProgressIndicator(),
-            ),
-            Text(
-              _appState.name,
-              style: const TextStyle(fontSize: 20, color: Colors.black),
-            )
-          ],
-        );
+        widgets = <Widget>[
+          const SizedBox(
+            width: 30,
+            height: 30,
+            child: CircularProgressIndicator(),
+          ),
+          Text(
+            _appState.name,
+            style: const TextStyle(fontSize: 20, color: Colors.black),
+          )
+        ];
+        break;
       case AppState.errorGeneric:
       case AppState.errorNoLocation:
       case AppState.errorHttpTimeout:
       case AppState.errorHttpError:
       case AppState.errorParsing:
+        widgets = <Widget>[
+          Text(
+            _appState.name,
+            style: const TextStyle(fontSize: 20, color: Colors.black),
+          ),
+          ElevatedButton(
+            child: const Text('Retry'),
+            onPressed: () => _mainFlow(),
+          ),
+        ];
+        break;
       case AppState.ready:
-        return Text(
-          _errorMessage.isEmpty ?
-          _appState.name : _errorMessage,
-          style: const TextStyle(fontSize: 20, color: Colors.black),
-        );
+        widgets = <Widget>[
+          const Text(
+            "Ready",
+            style: TextStyle(fontSize: 20, color: Colors.black),
+          ),
+        ];
+        break;
     }
+    if (_debugMessage.isNotEmpty) {
+      widgets.add(Text(
+        _debugMessage,
+        style: const TextStyle(fontSize: 15, color: Colors.black),
+      ));
+    }
+    return widgets;
   }
 }
