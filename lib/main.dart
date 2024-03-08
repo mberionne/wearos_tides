@@ -68,6 +68,7 @@ class _MainPageState extends State<MainPage> {
   AppState _appState = AppState.init;
   String _debugMessage = "";
   Location location = Location();
+  TideData? _tideData;
 
   void _mainFlow() async {
     try {
@@ -83,8 +84,8 @@ class _MainPageState extends State<MainPage> {
       }
       _moveTo(AppState.parsingData);
       TideData tideData = _parseBody(body);
-      _debugMessage = "Heights: ${tideData.heights}";
-      _moveTo(AppState.ready);
+      _debugMessage = "Heights: ${tideData!.heights}";
+      _moveTo(AppState.ready, tideData);
     } on TimeoutException catch (_) {
       _moveTo(AppState.errorHttpTimeout);
     } catch (err) {
@@ -106,9 +107,10 @@ class _MainPageState extends State<MainPage> {
     }
   }
 
-  _moveTo(AppState newState) {
+  _moveTo(AppState newState, [TideData? tideData]) {
     setState(() {
       _appState = newState;
+      _tideData = tideData;
     });
   }
 
@@ -237,6 +239,12 @@ class _MainPageState extends State<MainPage> {
             "Ready",
             style: TextStyle(fontSize: 20, color: Colors.black),
           ),
+          SizedBox(
+              width: MediaQuery.of(context).size.width * 0.8,
+              height: MediaQuery.of(context).size.width * 0.8,
+              child: ClipRect(
+                  // At this point we know for sure that TideData is available.
+                  child: CustomPaint(painter: TidePainter(_tideData!)))),
         ];
         break;
     }
@@ -247,5 +255,33 @@ class _MainPageState extends State<MainPage> {
       ));
     }
     return widgets;
+  }
+}
+
+class TidePainter extends CustomPainter {
+  final TideData tideData;
+
+  TidePainter(this.tideData);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    double w = size.width;
+    double h = size.height;
+    var center = size / 2;
+    var paint = Paint()..color = Colors.red;
+
+    RRect fullRect = RRect.fromRectAndRadius(
+      Rect.fromCenter(center: Offset(w / 2, h / 2), width: w, height: h),
+      const Radius.circular(15),
+    );
+    canvas.drawRRect(fullRect, Paint()..color = Colors.grey);
+    canvas.drawCircle(Offset(center.width, center.height), 10.0, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) {
+    // Not really needed because we don't expect that
+    // the data can change.
+    return false;
   }
 }
