@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:location/location.dart';
@@ -34,6 +36,25 @@ class TideData {
   }
 }
 
+class CoordinateConv {
+  CoordinateConv(
+      {required this.minValue,
+      required this.maxValue,
+      required this.width,
+      required this.height});
+  final double minValue;
+  final double maxValue;
+  final double height;
+  final double width;
+
+  Offset convert(double hour, double value) {
+    assert(hour >= 0 && hour <= 24);
+    assert(value >= minValue && value <= maxValue);
+    return Offset(width / 24 * hour,
+        -(height / (maxValue - minValue) * (minValue + value)));
+  }
+}
+
 void main() {
   runApp(const MyApp());
 }
@@ -47,6 +68,7 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Tides',
       theme: ThemeData(
+        scaffoldBackgroundColor: Colors.black,
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.black),
         useMaterial3: true,
       ),
@@ -84,7 +106,7 @@ class _MainPageState extends State<MainPage> {
       }
       _moveTo(AppState.parsingData);
       TideData tideData = _parseBody(body);
-      _debugMessage = "Heights: ${tideData!.heights}";
+      _debugMessage = "Heights: ${tideData.heights}";
       _moveTo(AppState.ready, tideData);
     } on TimeoutException catch (_) {
       _moveTo(AppState.errorHttpTimeout);
@@ -114,6 +136,10 @@ class _MainPageState extends State<MainPage> {
     });
   }
 
+  double metersToFeet(double m) {
+    return m * 3.28084;
+  }
+
   String _getCurrentDate() {
     final now = DateTime.now();
     return "${now.year}-${now.month}-${now.day}";
@@ -139,7 +165,10 @@ class _MainPageState extends State<MainPage> {
     if (result != 200) {
       throw Exception("Invalid result received ($result)");
     }
-    return TideData.fromJson(map);
+    TideData tideData = TideData.fromJson(map);
+    return TideData(
+        station: tideData.station,
+        heights: tideData.heights.map((val) => metersToFeet(val)).toList());
   }
 
   Uri _composeUri(LocationData locationData) {
@@ -161,6 +190,14 @@ class _MainPageState extends State<MainPage> {
   }
 
   Future<LocationData> _getLocation() async {
+    // Hardcode location for testing on web.
+    if (defaultTargetPlatform != TargetPlatform.android) {
+      return LocationData.fromMap(<String, double>{
+        'latitude': 32.7157,
+        'longitude': -117.1611,
+      });
+    }
+
     bool serviceEnabled = await location.serviceEnabled();
     if (!serviceEnabled) {
       serviceEnabled = await location.requestService();
@@ -213,7 +250,7 @@ class _MainPageState extends State<MainPage> {
           ),
           Text(
             _appState.name,
-            style: const TextStyle(fontSize: 20, color: Colors.black),
+            style: const TextStyle(fontSize: 20, color: Colors.white),
           )
         ];
         break;
@@ -225,7 +262,7 @@ class _MainPageState extends State<MainPage> {
         widgets = <Widget>[
           Text(
             _appState.name,
-            style: const TextStyle(fontSize: 20, color: Colors.black),
+            style: const TextStyle(fontSize: 20, color: Colors.white),
           ),
           ElevatedButton(
             child: const Text('Retry'),
@@ -237,11 +274,11 @@ class _MainPageState extends State<MainPage> {
         widgets = <Widget>[
           const Text(
             "Ready",
-            style: TextStyle(fontSize: 20, color: Colors.black),
+            style: TextStyle(fontSize: 20, color: Colors.white),
           ),
           SizedBox(
               width: MediaQuery.of(context).size.width * 0.8,
-              height: MediaQuery.of(context).size.width * 0.8,
+              height: MediaQuery.of(context).size.height * 0.8,
               child: ClipRect(
                   // At this point we know for sure that TideData is available.
                   child: CustomPaint(painter: TidePainter(_tideData!)))),
@@ -251,7 +288,7 @@ class _MainPageState extends State<MainPage> {
     if (_debugMessage.isNotEmpty) {
       widgets.add(Text(
         _debugMessage,
-        style: const TextStyle(fontSize: 15, color: Colors.black),
+        style: const TextStyle(fontSize: 8, color: Colors.white),
       ));
     }
     return widgets;
@@ -265,17 +302,78 @@ class TidePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    double w = size.width;
-    double h = size.height;
-    var center = size / 2;
-    var paint = Paint()..color = Colors.red;
+    double maxValue = tideData.heights.reduce(max).ceil().toDouble();
+    double minValue = tideData.heights.reduce(min).floor().toDouble();
 
-    RRect fullRect = RRect.fromRectAndRadius(
-      Rect.fromCenter(center: Offset(w / 2, h / 2), width: w, height: h),
-      const Radius.circular(15),
-    );
-    canvas.drawRRect(fullRect, Paint()..color = Colors.grey);
-    canvas.drawCircle(Offset(center.width, center.height), 10.0, paint);
+    // Draw main rectangle
+    canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromCenter(
+              center: Offset(size.width / 2, size.height / 2),
+              width: size.width,
+              height: size.height),
+          const Radius.circular(5),
+        ),
+        Paint()..color = Colors.grey.shade100);
+
+    // Values for the chart
+    const double margin = 10;
+    Offset zero = Offset(margin, size.height - margin);
+    CoordinateConv conv = CoordinateConv(
+        minValue: minValue,
+        maxValue: maxValue,
+        width: size.width - (2 * margin),
+        height: size.height - (2 * margin));
+
+    var paintAxes = Paint()..color = Colors.black;
+    // Draw X axis
+    canvas.drawLine(zero, zero + conv.convert(24, 0), paintAxes);
+    for (double i = 0; i < 24; i++) {
+      Offset t = conv.convert(i, 0);
+      canvas.drawLine(zero + t, zero + t + const Offset(0, 2), paintAxes);
+      if (i > 0 && i % 2 == 0) {
+        writeText(canvas, i.toString(), zero + t + const Offset(-2, 2));
+      }
+    }
+    // Draw Y axis
+    canvas.drawLine(zero, zero + conv.convert(0, maxValue), paintAxes);
+    for (double i = minValue; i <= maxValue; i++) {
+      Offset t = conv.convert(0, i);
+      canvas.drawLine(zero + t, zero + t + const Offset(-2, 0), paintAxes);
+      writeText(canvas, i.toString(), zero + t + const Offset(-margin, -4));
+    }
+
+    // Draw polygon with tides
+    var points = <Offset>[];
+    int minHour = 0;
+    int maxHour = 0;
+    points.add(zero + conv.convert(0, minValue));
+    for (int i = 0; i <= 24 && i < tideData.heights.length; i++) {
+      points.add(zero + conv.convert(i.toDouble(), tideData.heights[i]));
+      if (tideData.heights[i] < tideData.heights[minHour]) {
+        minHour = i;
+      } else if (tideData.heights[i] > tideData.heights[maxHour]) {
+        maxHour = i;
+      }
+    }
+    points.add(zero + conv.convert(24, minValue));
+    Path path = Path();
+    path.addPolygon(points, true);
+    var paintTides = Paint()..color = Colors.blue.shade400;
+    canvas.drawPath(path, paintTides);
+
+    // Write min and max values
+    double v = tideData.heights[maxHour];
+    writeText(canvas, v.toString(),
+        zero + conv.convert(maxHour.toDouble(), v) + const Offset(0, -10));
+  }
+
+  void writeText(Canvas canvas, String text, Offset offset) {
+    TextSpan span = TextSpan(
+        style: const TextStyle(color: Colors.black, fontSize: 8.0), text: text);
+    TextPainter tp = TextPainter(text: span, textDirection: TextDirection.ltr);
+    tp.layout();
+    tp.paint(canvas, offset);
   }
 
   @override
