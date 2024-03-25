@@ -32,14 +32,14 @@ class TideData {
   factory TideData.fromJson(Map<String, dynamic> data) {
     // This function does not perform any operation, but simply
     // extracts the values of interest from the JSON.
-    final station = data['station']; // dynamic
+    var station = data['station']; // dynamic
     SplayTreeMap<double, double> heights = SplayTreeMap();
     for (final height in data['heights']) {
-      heights[height['dt']] = height['height'];
+      heights[height['dt'].toDouble()] = height['height'].toDouble();
     }
     Map<double, double> extremes = {};
     for (final extreme in data['extremes']) {
-      extremes[extreme['dt']] = extreme['height'];
+      extremes[extreme['dt'].toDouble()] = extreme['height'].toDouble();
     }
     return TideData(
         station: station ?? "", heights: heights, extremes: extremes);
@@ -120,7 +120,7 @@ class _MainPageState extends State<MainPage> {
         body = await _fetchDataFromServer(locationData);
         _setCache(prefs, body);
       }
-      _moveTo(AppState.parsingData);
+      _moveTo(AppState.parsingData);  
       TideData tideData = _parseBody(body);
       _moveTo(AppState.ready, tideData);
     } on TimeoutException catch (_) {
@@ -185,7 +185,11 @@ class _MainPageState extends State<MainPage> {
       throw Exception("Invalid result received ($result)");
     }
     TideData tideData = TideData.fromJson(map);
-
+    // Reduce the length of station name
+    String station = "";
+    if (tideData.station.isNotEmpty) {
+      station = tideData.station.split(',')[0];
+    }
     // Normalize the timestamp in hours and the values in feet.
     double minTimestamp = tideData.heights.keys.reduce(min);
     SplayTreeMap<double, double> h = SplayTreeMap<double, double>.fromIterable(
@@ -196,7 +200,7 @@ class _MainPageState extends State<MainPage> {
     Map<double, double> e = tideData.extremes.map((key, value) =>
         MapEntry(_epochToHour(key - minTimestamp), _metersToFeet(value)));
 
-    return TideData(station: tideData.station, heights: h, extremes: e);
+    return TideData(station: station, heights: h, extremes: e);
   }
 
   Uri _composeUri(LocationData locationData) {
