@@ -1,4 +1,4 @@
-# myapp
+# Tides
 
 A new Flutter project.
 
