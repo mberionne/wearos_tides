@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:location/location.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -99,7 +100,6 @@ class MainPage extends StatefulWidget {
 class _MainPageState extends State<MainPage> {
   AppState _appState = AppState.init;
   String _debugMessage = "";
-  Location location = Location();
   TideData? _tideData;
 
   @override
@@ -110,6 +110,7 @@ class _MainPageState extends State<MainPage> {
 
   void _mainFlow() async {
     try {
+      _debugMessage = "";
       // TO DO: Fetch the location only if the cache is invalid.
       _moveTo(AppState.gettingLocation);
       LocationData locationData = await _getLocation();
@@ -120,7 +121,7 @@ class _MainPageState extends State<MainPage> {
         body = await _fetchDataFromServer(locationData);
         _setCache(prefs, body);
       }
-      _moveTo(AppState.parsingData);  
+      _moveTo(AppState.parsingData);
       TideData tideData = _parseBody(body);
       _moveTo(AppState.ready, tideData);
     } on TimeoutException catch (_) {
@@ -222,6 +223,20 @@ class _MainPageState extends State<MainPage> {
     }
   }
 
+  Future<void> _initLocation(Location location) async {
+    // Due to an issue with location service, we try to
+    // initialize it multiple times with a small delay between
+    // each attempt.
+    for (int i = 0; i < 50; i++) {
+      try {
+        await location.serviceEnabled();
+        return;
+      } on PlatformException {
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
+    }
+  }
+
   Future<LocationData> _getLocation() async {
     // Hardcode location for testing on web.
     if (defaultTargetPlatform != TargetPlatform.android) {
@@ -230,6 +245,8 @@ class _MainPageState extends State<MainPage> {
         'longitude': -118.195617,
       });
     }
+    Location location = Location();
+    await _initLocation(location);
 
     bool serviceEnabled = await location.serviceEnabled();
     if (!serviceEnabled) {
@@ -347,13 +364,16 @@ class TidePainter extends CustomPainter {
         paintBackground);
 
     // Values for the chart
-    const double margin = 10;
-    Offset zero = Offset(margin, size.height - margin);
+    const double rightMargin = 10;
+    const double leftMargin = 15;
+    const double topMargin = 40;
+    const double bottomMargin = 10;
+    Offset zero = Offset(leftMargin, size.height - bottomMargin);
     CoordinateConv conv = CoordinateConv(
         minValue: minValue,
         maxValue: maxValue,
-        width: size.width - (2 * margin),
-        height: size.height - (2 * margin));
+        width: size.width - (leftMargin + rightMargin),
+        height: size.height - (topMargin + bottomMargin));
 
     // Draw X axis
     canvas.drawLine(zero, zero + conv.convert(24, minValue), paintAxes);
@@ -365,8 +385,8 @@ class TidePainter extends CustomPainter {
       Offset t = conv.convert(hour, minValue);
       canvas.drawLine(zero + t, zero + t + const Offset(0, 2), paintAxes);
       if (hour > 0 && hour.toInt().isEven) {
-        _writeText(
-            canvas, hour.toString(), zero + t + const Offset(0, margin / 2));
+        _writeText(canvas, hour.toInt().toString(),
+            zero + t + const Offset(0, bottomMargin / 2));
       }
     }
     // Draw Y axis
@@ -374,7 +394,8 @@ class TidePainter extends CustomPainter {
     for (double i = minValue; i <= maxValue; i++) {
       Offset t = conv.convert(0, i);
       canvas.drawLine(zero + t, zero + t + const Offset(-2, 0), paintAxes);
-      _writeText(canvas, i.toString(), zero + t + const Offset(-margin / 2, 0));
+      _writeText(canvas, i.toInt().toString(),
+          zero + t + const Offset(-leftMargin / 2, 0));
     }
 
     // Draw polygon with tides
@@ -401,8 +422,8 @@ class TidePainter extends CustomPainter {
     }
 
     // Draw station name
-    _writeText(
-        canvas, tideData.station, zero + conv.convert(12, maxValue - 0.3),
+    _writeText(canvas, tideData.station,
+        zero + conv.convert(12, maxValue) + const Offset(0, -topMargin + 10),
         size: 14.0);
 
     // Draw line of current time
