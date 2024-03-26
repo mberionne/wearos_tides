@@ -4,9 +4,8 @@ import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
-import 'package:location/location.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 enum AppState {
@@ -113,12 +112,14 @@ class _MainPageState extends State<MainPage> {
       _debugMessage = "";
       // TO DO: Fetch the location only if the cache is invalid.
       _moveTo(AppState.gettingLocation);
-      LocationData locationData = await _getLocation();
+      Position position = await _determinePosition();
+      //LocationData locationData = await _getLocation();
       SharedPreferences prefs = await SharedPreferences.getInstance();
       String body = _getCacheIfValid(prefs);
       if (body.isEmpty) {
         _moveTo(AppState.gettingData);
-        body = await _fetchDataFromServer(locationData);
+        body =
+            await _fetchDataFromServer(position.latitude, position.longitude);
         _setCache(prefs, body);
       }
       _moveTo(AppState.parsingData);
@@ -204,17 +205,17 @@ class _MainPageState extends State<MainPage> {
     return TideData(station: station, heights: h, extremes: e);
   }
 
-  Uri _composeUri(LocationData locationData) {
+  Uri _composeUri(double latitude, double longitude) {
     return Uri.parse("https://www.worldtides.info/api/v3?"
         "heights&days=1&date=today&datum=CD&"
         "extremes&"
-        "lat=${locationData.latitude}&lon=${locationData.longitude}&"
+        "lat=$latitude&lon=$longitude&"
         "step=3600&"
         "key=8280c866-8a82-44e8-8943-c542836f15af");
   }
 
-  Future<String> _fetchDataFromServer(LocationData locationData) async {
-    final uri = _composeUri(locationData);
+  Future<String> _fetchDataFromServer(double latitude, double longitude) async {
+    final uri = _composeUri(latitude, longitude);
     final response = await http.get(uri).timeout(const Duration(seconds: 8));
     if (response.statusCode == 200) {
       return response.body;
@@ -223,48 +224,50 @@ class _MainPageState extends State<MainPage> {
     }
   }
 
-  Future<void> _initLocation(Location location) async {
-    // Due to an issue with location service, we try to
-    // initialize it multiple times with a small delay between
-    // each attempt.
-    for (int i = 0; i < 50; i++) {
-      try {
-        await location.serviceEnabled();
-        return;
-      } on PlatformException {
-        await Future.delayed(const Duration(milliseconds: 100));
-      }
-    }
-  }
-
-  Future<LocationData> _getLocation() async {
+  Future<Position> _determinePosition() async {
     // Hardcode location for testing on web.
     if (defaultTargetPlatform != TargetPlatform.android) {
-      return LocationData.fromMap(<String, double>{
-        'latitude': 33.768321,
-        'longitude': -118.195617,
-      });
+      return Position(
+          latitude: 33.768321,
+          longitude: -118.195617,
+          accuracy: 1.0,
+          altitude: 0,
+          altitudeAccuracy: 1.0,
+          speed: 0,
+          speedAccuracy: 1.0,
+          heading: 0,
+          headingAccuracy: 1.0,
+          timestamp: DateTime.now());
     }
-    Location location = Location();
-    await _initLocation(location);
 
-    bool serviceEnabled = await location.serviceEnabled();
+    // Test if location services are enabled.
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
-      serviceEnabled = await location.requestService();
-      if (!serviceEnabled) {
-        throw Exception('Service not enabled');
+      // Location services are not enabled don't continue
+      // accessing the position and request users of the
+      // App to enable the location services.
+      return Future.error('Location services are disabled.');
+    }
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        // Permissions are denied, next time you could try
+        // requesting permissions again (this is also where
+        // Android's shouldShowRequestPermissionRationale
+        // returned true. According to Android guidelines
+        // your App should show an explanatory UI now.
+        return Future.error('Location permissions are denied');
       }
     }
-    PermissionStatus permissionGranted = await location.hasPermission();
-    if (permissionGranted == PermissionStatus.denied) {
-      permissionGranted = await location.requestPermission();
-      if (permissionGranted != PermissionStatus.granted) {
-        throw Exception('Permissions not granted');
-      }
+    if (permission == LocationPermission.deniedForever) {
+      // Permissions are denied forever, handle appropriately.
+      return Future.error(
+          'Location permissions are permanently denied, we cannot request permissions.');
     }
-
-    LocationData currentPosition = await location.getLocation();
-    return currentPosition;
+    // When we reach here, permissions are granted and we can
+    // continue accessing the position of the device.
+    return await Geolocator.getCurrentPosition();
   }
 
   @override
