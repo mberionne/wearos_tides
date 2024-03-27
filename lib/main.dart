@@ -136,46 +136,61 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   }
 
   void _mainFlow({bool force = false}) async {
+    _debugMessage = "";
     final now = DateTime.now();
     if (!force && now.difference(_lastSuccessTimestamp).inMinutes.abs() < 15) {
       // We ran the algorithm recently and we are not requested to force it
       // so we can directly return.
     }
 
-    _debugMessage = "";
+    // Retrive position. At this point, it's ok to fail.
+    _moveTo(AppState.gettingLocation, null);
+    Position? position;
+    String positionErr = "";
     try {
-      _moveTo(AppState.gettingLocation, null);
-      Position position = await _determinePosition();
+      position = await _determinePosition();
+    } catch (err) {
+      positionErr = "$err";
+    }
+
+    // Retrieve data, either from the cache or from the server
+    String body = "";
+    _moveTo(AppState.gettingData);
+    try {
+      // Retrieve the cache      
       SharedPreferences prefs = await SharedPreferences.getInstance();
-      String body = _getCacheIfValid(prefs, now, position);
+      body = _getCacheIfValid(prefs, now, position);
+      // If the cache is not available and a position is available, perform query
+      // from the server. Otherwise move to error state.
       if (body.isEmpty) {
-        _moveTo(AppState.gettingData);
-        body =
-            await _fetchDataFromServer(position.latitude, position.longitude);
-        _setCache(prefs, body, now, position);
+        if (position != null) {
+          body =
+              await _fetchDataFromServer(position.latitude, position.longitude);
+          _setCache(prefs, body, now, position);
+        } else {
+          _debugMessage = positionErr;
+          _moveTo(AppState.errorNoLocation);
+          return;
+        }
       }
-      _moveTo(AppState.parsingData);
-      TideData tideData = _parseBody(body);
-      _lastSuccessTimestamp = now;
-      _moveTo(AppState.ready, tideData);
     } on TimeoutException catch (_) {
       _moveTo(AppState.errorHttpTimeout);
+      return;
     } catch (err) {
       _debugMessage = "$err";
-      switch (_appState) {
-        case AppState.gettingLocation:
-          _moveTo(AppState.errorNoLocation);
-          break;
-        case AppState.gettingData:
-          _moveTo(AppState.errorHttpError);
-          break;
-        case AppState.parsingData:
-          _moveTo(AppState.errorParsing);
-          break;
-        default:
-          _moveTo(AppState.errorGeneric);
-          break;
-      }
+      _moveTo(AppState.errorHttpError);
+      return;
+    }
+
+    // Parse data
+    _moveTo(AppState.parsingData);
+    try {
+      TideData tideData = _parseBody(body);
+      _moveTo(AppState.ready, tideData);
+      _lastSuccessTimestamp = now;
+    } catch (err) {
+      _debugMessage = "$err ($body)";
+      _moveTo(AppState.errorParsing);
     }
   }
 
@@ -194,7 +209,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
     return ms / 3600;
   }
 
-  String _getCacheIfValid(SharedPreferences prefs, DateTime now, Position position) {
+  String _getCacheIfValid(SharedPreferences prefs, DateTime now, Position? position) {
     // Check date
     String cachedDate = prefs.getString('date') ?? '';
     if (cachedDate.isEmpty || cachedDate != intl.DateFormat('yyyy-MM-dd').format(now)) {
@@ -202,15 +217,17 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
       return '';
     }
     // Check location
-    double? cachedLatitude = prefs.getDouble('lat');
-    double? cachedLongitude = prefs.getDouble('lon');
-    if (cachedLatitude == null || cachedLongitude == null) {
-      return '';
-    }
-    double distanceMeters = Geolocator.distanceBetween(position.latitude, position.longitude, cachedLatitude, cachedLongitude);
-    if (distanceMeters > 100000) {
-      // If the cache is for a point that is too far, return immediately.
-      return '';
+    if (position != null) {
+      double? cachedLatitude = prefs.getDouble('lat');
+      double? cachedLongitude = prefs.getDouble('lon');
+      if (cachedLatitude == null || cachedLongitude == null) {
+        return '';
+      }
+      double distanceMeters = Geolocator.distanceBetween(position.latitude, position.longitude, cachedLatitude, cachedLongitude);
+      if (distanceMeters > 100000) {
+        // If the cache is for a point that is too far, return immediately.
+        return '';
+      }
     }
     // Retrieve cached value
     String cachedValue = prefs.getString('value') ?? '';
@@ -320,8 +337,8 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
       return position;
     }
 
-    // This application can work with low accuracy and we also want to
-    // specify a timeout to avoid an infinite wait.
+    // This application can work with low accuracy (lowest does not guarantee
+    // a location),  and we also want to specify a timeout to avoid an infinite wait.
     return await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.low,
         timeLimit: const Duration(seconds: 8));
