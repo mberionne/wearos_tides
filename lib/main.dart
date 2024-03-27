@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart' as intl;
 import 'package:shared_preferences/shared_preferences.dart';
 
 enum AppState {
@@ -146,12 +147,12 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
       _moveTo(AppState.gettingLocation, null);
       Position position = await _determinePosition();
       SharedPreferences prefs = await SharedPreferences.getInstance();
-      String body = _getCacheIfValid(prefs, now);
+      String body = _getCacheIfValid(prefs, now, position);
       if (body.isEmpty) {
         _moveTo(AppState.gettingData);
         body =
             await _fetchDataFromServer(position.latitude, position.longitude);
-        _setCache(prefs, body, now);
+        _setCache(prefs, body, now, position);
       }
       _moveTo(AppState.parsingData);
       TideData tideData = _parseBody(body);
@@ -193,22 +194,34 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
     return ms / 3600;
   }
 
-  String _getCurrentDate(DateTime now) {
-    return "${now.year}-${now.month}-${now.day}";
-  }
-
-  String _getCacheIfValid(SharedPreferences prefs, DateTime now) {
+  String _getCacheIfValid(SharedPreferences prefs, DateTime now, Position position) {
+    // Check date
     String cachedDate = prefs.getString('date') ?? '';
-    if (cachedDate.isEmpty || cachedDate != _getCurrentDate(now)) {
+    if (cachedDate.isEmpty || cachedDate != intl.DateFormat('yyyy-MM-dd').format(now)) {
+      // If the cache is for a different day, return immediately.
       return '';
     }
+    // Check location
+    double? cachedLatitude = prefs.getDouble('lat');
+    double? cachedLongitude = prefs.getDouble('lon');
+    if (cachedLatitude == null || cachedLongitude == null) {
+      return '';
+    }
+    double distanceMeters = Geolocator.distanceBetween(position.latitude, position.longitude, cachedLatitude, cachedLongitude);
+    if (distanceMeters > 100000) {
+      // If the cache is for a point that is too far, return immediately.
+      return '';
+    }
+    // Retrieve cached value
     String cachedValue = prefs.getString('value') ?? '';
     return cachedValue;
   }
 
-  void _setCache(SharedPreferences prefs, String value, DateTime now) {
-    prefs.setString('date', _getCurrentDate(now));
+  void _setCache(SharedPreferences prefs, String value, DateTime now, Position position) {
+    prefs.setString('date', intl.DateFormat('yyyy-MM-dd').format(now));
     prefs.setString('value', value);
+    prefs.setDouble('lat', position.latitude);
+    prefs.setDouble('lon', position.longitude);
   }
 
   TideData _parseBody(String body) {
