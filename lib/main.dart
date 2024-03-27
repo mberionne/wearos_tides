@@ -96,34 +96,66 @@ class MainPage extends StatefulWidget {
   State<MainPage> createState() => _MainPageState();
 }
 
-class _MainPageState extends State<MainPage> {
+class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   AppState _appState = AppState.init;
+  bool _needsRefresh = false;
   String _debugMessage = "";
   TideData? _tideData;
+  DateTime _lastSuccessTimestamp = DateTime.fromMillisecondsSinceEpoch(0);
 
   @override
   void initState() {
     super.initState();
-    _mainFlow();
+    WidgetsBinding.instance.addObserver(this);
+    _mainFlow(force: true);
   }
 
-  void _mainFlow() async {
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    switch (state) {
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.paused:
+      case AppLifecycleState.detached:
+        _needsRefresh = true;
+        break;
+      case AppLifecycleState.resumed:
+        if (_needsRefresh) {
+          _needsRefresh = false;
+          _mainFlow(force: false);
+        }
+        break;
+    }
+  }
+
+  void _mainFlow({bool force = false}) async {
+    final now = DateTime.now();
+    if (!force && now.difference(_lastSuccessTimestamp).inMinutes.abs() < 15) {
+      // We ran the algorithm recently and we are not requested to force it
+      // so we can directly return.
+    }
+
+    _debugMessage = "";
     try {
-      _debugMessage = "";
-      // TO DO: Fetch the location only if the cache is invalid.
-      _moveTo(AppState.gettingLocation);
+      _moveTo(AppState.gettingLocation, null);
       Position position = await _determinePosition();
-      //LocationData locationData = await _getLocation();
       SharedPreferences prefs = await SharedPreferences.getInstance();
-      String body = _getCacheIfValid(prefs);
+      String body = _getCacheIfValid(prefs, now);
       if (body.isEmpty) {
         _moveTo(AppState.gettingData);
         body =
             await _fetchDataFromServer(position.latitude, position.longitude);
-        _setCache(prefs, body);
+        _setCache(prefs, body, now);
       }
       _moveTo(AppState.parsingData);
       TideData tideData = _parseBody(body);
+      _lastSuccessTimestamp = now;
       _moveTo(AppState.ready, tideData);
     } on TimeoutException catch (_) {
       _moveTo(AppState.errorHttpTimeout);
@@ -161,22 +193,21 @@ class _MainPageState extends State<MainPage> {
     return ms / 3600;
   }
 
-  String _getCurrentDate() {
-    final now = DateTime.now();
+  String _getCurrentDate(DateTime now) {
     return "${now.year}-${now.month}-${now.day}";
   }
 
-  String _getCacheIfValid(SharedPreferences prefs) {
+  String _getCacheIfValid(SharedPreferences prefs, DateTime now) {
     String cachedDate = prefs.getString('date') ?? '';
-    if (cachedDate.isEmpty || cachedDate != _getCurrentDate()) {
+    if (cachedDate.isEmpty || cachedDate != _getCurrentDate(now)) {
       return '';
     }
     String cachedValue = prefs.getString('value') ?? '';
     return cachedValue;
   }
 
-  void _setCache(SharedPreferences prefs, String value) {
-    prefs.setString('date', _getCurrentDate());
+  void _setCache(SharedPreferences prefs, String value, DateTime now) {
+    prefs.setString('date', _getCurrentDate(now));
     prefs.setString('value', value);
   }
 
@@ -225,19 +256,22 @@ class _MainPageState extends State<MainPage> {
   }
 
   Future<Position> _determinePosition() async {
-    // Hardcode location for testing on web.
+    // Hardcode location for testing on web. Return it with a small
+    // delay to facilitate UI testing.
     if (defaultTargetPlatform != TargetPlatform.android) {
-      return Position(
-          latitude: 33.768321,
-          longitude: -118.195617,
-          accuracy: 1.0,
-          altitude: 0,
-          altitudeAccuracy: 1.0,
-          speed: 0,
-          speedAccuracy: 1.0,
-          heading: 0,
-          headingAccuracy: 1.0,
-          timestamp: DateTime.now());
+      return Future.delayed(
+          const Duration(seconds: 2),
+          () => Position(
+              latitude: 33.768321,
+              longitude: -118.195617,
+              accuracy: 1.0,
+              altitude: 0,
+              altitudeAccuracy: 1.0,
+              speed: 0,
+              speedAccuracy: 1.0,
+              heading: 0,
+              headingAccuracy: 1.0,
+              timestamp: DateTime.now()));
     }
 
     // Test if location services are enabled.
@@ -246,7 +280,7 @@ class _MainPageState extends State<MainPage> {
       // Location services are not enabled don't continue
       // accessing the position and request users of the
       // App to enable the location services.
-      return Future.error('Location services are disabled.');
+      return Future.error('Location is disabled.');
     }
     LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
@@ -257,17 +291,27 @@ class _MainPageState extends State<MainPage> {
         // Android's shouldShowRequestPermissionRationale
         // returned true. According to Android guidelines
         // your App should show an explanatory UI now.
-        return Future.error('Location permissions are denied');
+        return Future.error('Location is denied');
       }
     }
     if (permission == LocationPermission.deniedForever) {
       // Permissions are denied forever, handle appropriately.
-      return Future.error(
-          'Location permissions are permanently denied, we cannot request permissions.');
+      return Future.error('Location is permanently denied');
     }
     // When we reach here, permissions are granted and we can
     // continue accessing the position of the device.
-    return await Geolocator.getCurrentPosition();
+
+    // Check if there is a last known location.
+    Position? position = await Geolocator.getLastKnownPosition();
+    if (position != null) {
+      return position;
+    }
+
+    // This application can work with low accuracy and we also want to
+    // specify a timeout to avoid an infinite wait.
+    return await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.low,
+        timeLimit: const Duration(seconds: 8));
   }
 
   @override
@@ -280,6 +324,30 @@ class _MainPageState extends State<MainPage> {
         ),
       ),
     );
+  }
+
+  String stateToString(AppState state) {
+    switch (state) {
+      case AppState.gettingLocation:
+        return "Retrieving location";
+      case AppState.gettingData:
+        return "Retrieving data";
+      case AppState.parsingData:
+        return "Parsing data";
+      case AppState.errorGeneric:
+        return "Generic error";
+      case AppState.errorNoLocation:
+        return "Location is not available";
+      case AppState.errorHttpTimeout:
+        return "Data connection timeout";
+      case AppState.errorHttpError:
+        return "Data connection error";
+      case AppState.errorParsing:
+        return "Invalid data";
+      default:
+        // Other states don't have a valid string to be displayed.
+        return "";
+    }
   }
 
   List<Widget> showState() {
@@ -296,7 +364,7 @@ class _MainPageState extends State<MainPage> {
             child: CircularProgressIndicator(),
           ),
           Text(
-            _appState.name,
+            stateToString(_appState),
             style: const TextStyle(fontSize: 20, color: Colors.white),
           )
         ];
@@ -308,23 +376,40 @@ class _MainPageState extends State<MainPage> {
       case AppState.errorParsing:
         widgets = <Widget>[
           Text(
-            _appState.name,
+            stateToString(_appState),
             style: const TextStyle(fontSize: 20, color: Colors.white),
           ),
           ElevatedButton(
             child: const Text('Retry'),
-            onPressed: () => _mainFlow(),
+            onPressed: () => _mainFlow(force: true),
           ),
         ];
         break;
       case AppState.ready:
         widgets = <Widget>[
+          // Wrap the Text in SizedBox, so that we can truncate the text
+          // if it's too long.
           SizedBox(
               width: MediaQuery.of(context).size.width * 0.8,
-              height: MediaQuery.of(context).size.height * 0.8,
-              child: ClipRect(
-                  // At this point we know for sure that TideData is available.
-                  child: CustomPaint(painter: TidePainter(_tideData!)))),
+              child: Center(
+                  child: Text(
+                _tideData?.station ?? "",
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.white),
+              ))),
+          SizedBox(
+              width: MediaQuery.of(context).size.width * 0.8,
+              height: MediaQuery.of(context).size.height * 0.7,
+              child: GestureDetector(
+                  onDoubleTap: () {
+                    if (_appState == AppState.ready) {
+                      _mainFlow(force: true);
+                    }
+                  },
+                  child: ClipRect(
+                      // At this point we know for sure that TideData is available.
+                      child: CustomPaint(
+                          painter: TidePainter(_tideData!, DateTime.now()))))),
         ];
         break;
     }
@@ -340,36 +425,27 @@ class _MainPageState extends State<MainPage> {
 
 class TidePainter extends CustomPainter {
   final TideData tideData;
+  final DateTime now;
 
-  TidePainter(this.tideData);
+  TidePainter(this.tideData, this.now);
 
   @override
   void paint(Canvas canvas, Size size) {
     double maxValue = tideData.heights.values.reduce(max).ceil().toDouble();
     double minValue = tideData.heights.values.reduce(min).floor().toDouble();
 
-    var paintAxes = Paint()..color = Colors.black;
-    var paintTides = Paint()..color = Colors.blue.shade400;
-    var paintBackground = Paint()..color = Colors.grey.shade100;
+    var paintAxes = Paint()..color = Colors.white24;
+    var paintTides = Paint()..color = Colors.lightBlue.shade900;
+    var paintExtremes = Paint()..color = Colors.lightBlue.shade100;
+    var paintBackground = Paint()..color = Colors.grey.shade800;
     var paintCurrentTime = Paint()
-      ..color = Colors.red.shade200
+      ..color = Colors.yellow.shade200
       ..strokeWidth = 2;
-
-    // Draw main rectangle
-    canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromCenter(
-              center: Offset(size.width / 2, size.height / 2),
-              width: size.width,
-              height: size.height),
-          const Radius.circular(5),
-        ),
-        paintBackground);
 
     // Values for the chart
     const double rightMargin = 10;
     const double leftMargin = 15;
-    const double topMargin = 40;
+    const double topMargin = 20;
     const double bottomMargin = 10;
     Offset zero = Offset(leftMargin, size.height - bottomMargin);
     CoordinateConv conv = CoordinateConv(
@@ -377,6 +453,21 @@ class TidePainter extends CustomPainter {
         maxValue: maxValue,
         width: size.width - (leftMargin + rightMargin),
         height: size.height - (topMargin + bottomMargin));
+
+    // Draw background of the chart
+    canvas.drawRect(Rect.fromPoints(zero, zero + conv.convert(24, maxValue)),
+        paintBackground);
+
+    // Draw polygon with tides
+    var points = <Offset>[];
+    points.add(zero + conv.convert(0, minValue));
+    for (var entry in tideData.heights.entries) {
+      points.add(zero + conv.convert(entry.key, entry.value));
+    }
+    points.add(zero + conv.convert(24, minValue));
+    Path path = Path();
+    path.addPolygon(points, true);
+    canvas.drawPath(path, paintTides);
 
     // Draw X axis
     canvas.drawLine(zero, zero + conv.convert(24, minValue), paintAxes);
@@ -387,7 +478,7 @@ class TidePainter extends CustomPainter {
       }
       Offset t = conv.convert(hour, minValue);
       canvas.drawLine(zero + t, zero + t + const Offset(0, 2), paintAxes);
-      if (hour > 0 && hour.toInt().isEven) {
+      if (hour > 0 && hour.toInt() % 3 == 0) {
         _writeText(canvas, hour.toInt().toString(),
             zero + t + const Offset(0, bottomMargin / 2));
       }
@@ -401,19 +492,9 @@ class TidePainter extends CustomPainter {
           zero + t + const Offset(-leftMargin / 2, 0));
     }
 
-    // Draw polygon with tides
-    var points = <Offset>[];
-    points.add(zero + conv.convert(0, minValue));
-    for (var entry in tideData.heights.entries) {
-      points.add(zero + conv.convert(entry.key, entry.value));
-    }
-    points.add(zero + conv.convert(24, minValue));
-    Path path = Path();
-    path.addPolygon(points, true);
-    canvas.drawPath(path, paintTides);
-
-    // Write min and max values
+    // Write min and max values and associated dot
     for (var e in tideData.extremes.entries) {
+      canvas.drawCircle(zero + conv.convert(e.key, e.value), 2, paintExtremes);
       String hour = e.key.truncate().toString();
       String minute = ((e.key - e.key.truncate()) * 60)
           .truncate()
@@ -421,16 +502,10 @@ class TidePainter extends CustomPainter {
           .padLeft(2, "0");
       _writeText(canvas, "$hour:$minute",
           zero + conv.convert(e.key, e.value) + const Offset(0, -10),
-          size: 14.0);
+          size: 10);
     }
 
-    // Draw station name
-    _writeText(canvas, tideData.station,
-        zero + conv.convert(12, maxValue) + const Offset(0, -topMargin + 10),
-        size: 14.0);
-
     // Draw line of current time
-    final now = DateTime.now();
     double currentHour = now.hour + (now.minute / 60);
     canvas.drawLine(zero + conv.convert(currentHour, minValue),
         zero + conv.convert(currentHour, maxValue), paintCurrentTime);
@@ -440,7 +515,7 @@ class TidePainter extends CustomPainter {
       {double size = 8.0}) {
     TextSpan span = TextSpan(
         style: TextStyle(
-            color: Colors.black, fontSize: size, fontWeight: FontWeight.bold),
+            color: Colors.white, fontSize: size, fontWeight: FontWeight.bold),
         text: text);
     TextPainter tp = TextPainter(
         text: span,
@@ -451,9 +526,7 @@ class TidePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) {
-    // Not really needed because we don't expect that
-    // the data can change.
-    return false;
+  bool shouldRepaint(TidePainter oldDelegate) {
+    return oldDelegate.now != now;
   }
 }
