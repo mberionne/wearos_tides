@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:math';
+import 'package:equations/equations.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
@@ -157,7 +158,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
     String body = "";
     _moveTo(AppState.gettingData);
     try {
-      // Retrieve the cache      
+      // Retrieve the cache
       SharedPreferences prefs = await SharedPreferences.getInstance();
       body = _getCacheIfValid(prefs, now, position);
       // If the cache is not available and a position is available, perform query
@@ -209,10 +210,12 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
     return ms / 3600;
   }
 
-  String _getCacheIfValid(SharedPreferences prefs, DateTime now, Position? position) {
+  String _getCacheIfValid(
+      SharedPreferences prefs, DateTime now, Position? position) {
     // Check date
     String cachedDate = prefs.getString('date') ?? '';
-    if (cachedDate.isEmpty || cachedDate != intl.DateFormat('yyyy-MM-dd').format(now)) {
+    if (cachedDate.isEmpty ||
+        cachedDate != intl.DateFormat('yyyy-MM-dd').format(now)) {
       // If the cache is for a different day, return immediately.
       return '';
     }
@@ -223,7 +226,8 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
       if (cachedLatitude == null || cachedLongitude == null) {
         return '';
       }
-      double distanceMeters = Geolocator.distanceBetween(position.latitude, position.longitude, cachedLatitude, cachedLongitude);
+      double distanceMeters = Geolocator.distanceBetween(position.latitude,
+          position.longitude, cachedLatitude, cachedLongitude);
       if (distanceMeters > 100000) {
         // If the cache is for a point that is too far, return immediately.
         return '';
@@ -234,7 +238,8 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
     return cachedValue;
   }
 
-  void _setCache(SharedPreferences prefs, String value, DateTime now, Position position) {
+  void _setCache(
+      SharedPreferences prefs, String value, DateTime now, Position position) {
     prefs.setString('date', intl.DateFormat('yyyy-MM-dd').format(now));
     prefs.setString('value', value);
     prefs.setDouble('lat', position.latitude);
@@ -242,13 +247,14 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   }
 
   TideData _parseBody(String body) {
+    // Parse the JSON and verify the correctness.
     Map<String, dynamic> map = jsonDecode(body);
     int result = map['status'];
     if (result != 200) {
       throw Exception("Invalid result received ($result)");
     }
     TideData tideData = TideData.fromJson(map);
-    // Reduce the length of station name
+    // Reduce the length of station name (to be displayed easily)
     String station = "";
     if (tideData.station.isNotEmpty) {
       station = tideData.station.split(',')[0];
@@ -260,6 +266,21 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
         key: (e) => _epochToHour(e.key - minTimestamp),
         value: (e) => _metersToFeet(e.value));
     h.removeWhere((key, value) => key > 24);
+    // Create interpolation points using Spline algorithm
+    final spline = SplineInterpolation(
+        nodes: h.entries
+            .map((e) => InterpolationNode(x: e.key, y: e.value))
+            .toList());
+    SplayTreeMap<double, double> interpolation = SplayTreeMap();
+    for (final e in h.entries) {
+      final nextKey = h.firstKeyAfter(e.key);
+      if (nextKey != null) {
+        final newKey = (e.key + nextKey) / 2;
+        interpolation.putIfAbsent(newKey, () => spline.compute(newKey));
+      }
+    }
+    h.addAll(interpolation);
+    // Normalize the timestamp in hours and the values in feet for the extremes.
     Map<double, double> e = tideData.extremes.map((key, value) =>
         MapEntry(_epochToHour(key - minTimestamp), _metersToFeet(value)));
 
@@ -461,14 +482,14 @@ class TidePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    double maxValue = tideData.heights.values.reduce(max).ceil().toDouble();
-    double minValue = tideData.heights.values.reduce(min).floor().toDouble();
+    final maxValue = tideData.heights.values.reduce(max).ceil().toDouble();
+    final minValue = tideData.heights.values.reduce(min).floor().toDouble();
 
-    var paintAxes = Paint()..color = Colors.white24;
-    var paintTides = Paint()..color = Colors.lightBlue.shade900;
-    var paintExtremes = Paint()..color = Colors.lightBlue.shade100;
-    var paintBackground = Paint()..color = Colors.grey.shade800;
-    var paintCurrentTime = Paint()
+    final paintAxes = Paint()..color = Colors.white24;
+    final paintTides = Paint()..color = Colors.lightBlue.shade900;
+    final paintExtremes = Paint()..color = Colors.lightBlue.shade100;
+    final paintBackground = Paint()..color = Colors.grey.shade800;
+    final paintCurrentTime = Paint()
       ..color = Colors.yellow.shade200
       ..strokeWidth = 2;
 
@@ -477,7 +498,7 @@ class TidePainter extends CustomPainter {
     const double leftMargin = 15;
     const double topMargin = 20;
     const double bottomMargin = 10;
-    Offset zero = Offset(leftMargin, size.height - bottomMargin);
+    final zero = Offset(leftMargin, size.height - bottomMargin);
     CoordinateConv conv = CoordinateConv(
         minValue: minValue,
         maxValue: maxValue,
