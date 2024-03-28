@@ -156,10 +156,11 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
 
     // Retrieve data, either from the cache or from the server
     String body = "";
+    bool isFromServer = false;
     _moveTo(AppState.gettingData);
+    SharedPreferences prefs = await SharedPreferences.getInstance();
     try {
       // Retrieve the cache
-      SharedPreferences prefs = await SharedPreferences.getInstance();
       body = _getCacheIfValid(prefs, now, position);
       // If the cache is not available and a position is available, perform query
       // from the server. Otherwise move to error state.
@@ -167,7 +168,9 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
         if (position != null) {
           body =
               await _fetchDataFromServer(position.latitude, position.longitude);
-          _setCache(prefs, body, now, position);
+          // Don't cache the body yet, as we want to make sure that it can be parsed.
+          // Simply mark it as from server, so we can cache it later.
+          isFromServer = true;
         } else {
           _debugMessage = positionErr;
           _moveTo(AppState.errorNoLocation);
@@ -187,6 +190,10 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
     _moveTo(AppState.parsingData);
     try {
       TideData tideData = _parseBody(body);
+      if (isFromServer) {
+        // Position must be known if we retrieve content from server.
+        _setCache(prefs, body, now, position!);
+      }
       _moveTo(AppState.ready, tideData);
       _lastSuccessTimestamp = now;
     } catch (err) {
@@ -444,7 +451,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
               // Wrap the Text in SizedBox, so that we can truncate the text
               // if it's too long.
               SizedBox(
-                  width: MediaQuery.of(context).size.width * 0.8,
+                  width: MediaQuery.of(context).size.width * 0.6,
                   child: Center(
                       child: Text(
                     _tideData?.station ?? "",
