@@ -437,17 +437,22 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
         ];
         break;
       case AppState.ready:
-        widgets = <Widget>[
-          // Wrap the Text in SizedBox, so that we can truncate the text
-          // if it's too long.
-          SizedBox(
-              width: MediaQuery.of(context).size.width * 0.8,
-              child: Center(
-                  child: Text(
-                _tideData?.station ?? "",
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: Colors.white),
-              ))),
+        widgets = <Widget>[];
+        // Write the station name only if it's available.
+        if ((_tideData?.station ?? "").isNotEmpty) {
+          widgets.add(
+              // Wrap the Text in SizedBox, so that we can truncate the text
+              // if it's too long.
+              SizedBox(
+                  width: MediaQuery.of(context).size.width * 0.8,
+                  child: Center(
+                      child: Text(
+                    _tideData?.station ?? "",
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white),
+                  ))));
+        }
+        widgets.add(
           SizedBox(
               width: MediaQuery.of(context).size.width * 0.8,
               height: MediaQuery.of(context).size.height * 0.7,
@@ -461,7 +466,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
                       // At this point we know for sure that TideData is available.
                       child: CustomPaint(
                           painter: TidePainter(_tideData!, DateTime.now()))))),
-        ];
+        );
         break;
     }
     if (_debugMessage.isNotEmpty) {
@@ -543,6 +548,11 @@ class TidePainter extends CustomPainter {
           zero + t + const Offset(-leftMargin / 2, 0));
     }
 
+    // Draw line of current time
+    double currentHour = now.hour + (now.minute / 60);
+    canvas.drawLine(zero + conv.convert(currentHour, minValue),
+        zero + conv.convert(currentHour, maxValue), paintCurrentTime);
+
     // Write min and max values and associated dot
     for (var e in tideData.extremes.entries) {
       canvas.drawCircle(zero + conv.convert(e.key, e.value), 2, paintExtremes);
@@ -555,11 +565,6 @@ class TidePainter extends CustomPainter {
           zero + conv.convert(e.key, e.value) + const Offset(0, -10),
           size: 10);
     }
-
-    // Draw line of current time
-    double currentHour = now.hour + (now.minute / 60);
-    canvas.drawLine(zero + conv.convert(currentHour, minValue),
-        zero + conv.convert(currentHour, maxValue), paintCurrentTime);
   }
 
   void _writeText(Canvas canvas, String text, Offset offset,
