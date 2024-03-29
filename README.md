@@ -1,16 +1,24 @@
 # Tides
 
-A new Flutter project.
+An application for WearOS watches to display the ocean tide.
 
-## Getting Started
+The application is intentionally very simple:
+ * It can only use the current location of the watch,
+ * It only display the data for the day.
 
-This project is a starting point for a Flutter application.
+Normally the tide chart of the next day is similar to the previous one,
+so the chart of the current day is sufficient and helps keeping the UX of
+the application simple and quick to look at.
 
-A few resources to get you started if this is your first Flutter project:
+It is possible to double tap on the tide chart to force a refresh.
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+# Compile the app
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+To compile it, run the following command in the terminal:
+```
+ $ flutter build apk
+```
+
+The APK is generated in the following path: `build/app/outputs/flutter-apk/app-release.apk`. The APK can be downloaded and installed on the device.
+
+The app version is defined directly in the gradle file in `android/app/build.gradle` (and not taken from `local.properties`).
