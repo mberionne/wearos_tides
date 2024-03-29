@@ -8,6 +8,8 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart' as intl;
+import 'package:logging_to_logcat/logging_to_logcat.dart';
+import 'package:logging/logging.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 enum AppState {
@@ -68,6 +70,10 @@ class CoordinateConv {
 }
 
 void main() {
+  // Activate logging
+  Logger.root.activateLogcat();
+  Logger.root.level = Level.ALL;
+
   runApp(const MyApp());
 }
 
@@ -101,9 +107,9 @@ class MainPage extends StatefulWidget {
 class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   AppState _appState = AppState.init;
   bool _needsRefresh = false;
-  String _debugMessage = "";
   TideData? _tideData;
   DateTime _lastSuccessTimestamp = DateTime.fromMillisecondsSinceEpoch(0);
+  Logger log = Logger("Tides");
 
   @override
   void initState() {
@@ -137,21 +143,24 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   }
 
   void _mainFlow({bool force = false}) async {
-    _debugMessage = "";
+    log.info("Start main flow");
+
     final now = DateTime.now();
     if (!force && now.difference(_lastSuccessTimestamp).inMinutes.abs() < 15) {
       // We ran the algorithm recently and we are not requested to force it
-      // so we can directly return.
+      // so we can directly return. This happens only when the app goes to
+      // background and then becomes visible again.
+      log.info("Recently displayed - skipping refresh");
+      return;
     }
 
     // Retrive position. At this point, it's ok to fail.
     _moveTo(AppState.gettingLocation, null);
     Position? position;
-    String positionErr = "";
     try {
       position = await _determinePosition();
     } catch (err) {
-      positionErr = "$err";
+      log.severe("Location error: $err");
     }
 
     // Retrieve data, either from the cache or from the server
@@ -166,22 +175,24 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
       // from the server. Otherwise move to error state.
       if (body.isEmpty) {
         if (position != null) {
+          log.info("Cache is empty - retrieving from server");
           body =
               await _fetchDataFromServer(position.latitude, position.longitude);
           // Don't cache the body yet, as we want to make sure that it can be parsed.
           // Simply mark it as from server, so we can cache it later.
           isFromServer = true;
         } else {
-          _debugMessage = positionErr;
+          log.severe("Cache is empty and location unavailable");
           _moveTo(AppState.errorNoLocation);
           return;
         }
       }
     } on TimeoutException catch (_) {
+      log.severe("Http timeout exception");
       _moveTo(AppState.errorHttpTimeout);
       return;
     } catch (err) {
-      _debugMessage = "$err";
+      log.severe("Http error: $err");
       _moveTo(AppState.errorHttpError);
       return;
     }
@@ -194,10 +205,12 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
         // Position must be known if we retrieve content from server.
         _setCache(prefs, body, now, position!);
       }
+      log.info("Body with tides parsed successfully");
       _moveTo(AppState.ready, tideData);
       _lastSuccessTimestamp = now;
     } catch (err) {
-      _debugMessage = "$err ($body)";
+      log.severe("Error parsing the body: $err");
+      log.severe("Body content: $body");
       _moveTo(AppState.errorParsing);
     }
   }
@@ -224,6 +237,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
     if (cachedDate.isEmpty ||
         cachedDate != intl.DateFormat('yyyy-MM-dd').format(now)) {
       // If the cache is for a different day, return immediately.
+      log.info("Discarding cache from a different day: $cachedDate");
       return '';
     }
     // Check location
@@ -237,11 +251,13 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
           position.longitude, cachedLatitude, cachedLongitude);
       if (distanceMeters > 100000) {
         // If the cache is for a point that is too far, return immediately.
+        log.info("Discarding cache due to distance: $distanceMeters meters");
         return '';
       }
     }
     // Retrieve cached value
     String cachedValue = prefs.getString('value') ?? '';
+    log.info("Body retrieved from cache (${cachedValue.length} bytes)");
     return cachedValue;
   }
 
@@ -258,6 +274,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
     Map<String, dynamic> map = jsonDecode(body);
     int result = map['status'];
     if (result != 200) {
+      log.severe("Invalid result: $result");
       throw Exception("Invalid result received ($result)");
     }
     TideData tideData = TideData.fromJson(map);
@@ -305,10 +322,17 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
 
   Future<String> _fetchDataFromServer(double latitude, double longitude) async {
     final uri = _composeUri(latitude, longitude);
+
+    String debugUri = uri.toString();
+    debugUri = debugUri.substring(0, debugUri.indexOf("key="));
+    log.info("URI for request (without key): $debugUri");
+
     final response = await http.get(uri).timeout(const Duration(seconds: 8));
     if (response.statusCode == 200) {
       return response.body;
     } else {
+      log.severe("Error response from server - code: ${response.statusCode}");
+      log.severe("Error response from server - body: ${response.body}");
       throw Exception('Error response from server');
     }
   }
@@ -362,6 +386,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
     // Check if there is a last known location.
     Position? position = await Geolocator.getLastKnownPosition();
     if (position != null) {
+      log.info("Last known location is returned");
       return position;
     }
 
@@ -475,12 +500,6 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
                           painter: TidePainter(_tideData!, DateTime.now()))))),
         );
         break;
-    }
-    if (_debugMessage.isNotEmpty) {
-      widgets.add(Text(
-        _debugMessage,
-        style: const TextStyle(fontSize: 8, color: Colors.white),
-      ));
     }
     return widgets;
   }
