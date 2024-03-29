@@ -106,6 +106,7 @@ class MainPage extends StatefulWidget {
 
 class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   AppState _appState = AppState.init;
+  bool _isRunning = false;
   bool _needsRefresh = false;
   TideData? _tideData;
   DateTime _lastSuccessTimestamp = DateTime.fromMillisecondsSinceEpoch(0);
@@ -143,6 +144,16 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   }
 
   void _mainFlow({bool force = false}) async {
+    if (_isRunning) {
+      log.info("Main flow already running");
+      return;
+    }
+    _isRunning = true;
+    await _mainFlowImpl(force);
+    _isRunning = false;
+  }
+
+  Future _mainFlowImpl(bool force) async {
     log.info("Start main flow");
 
     final now = DateTime.now();
@@ -249,7 +260,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
       }
       double distanceMeters = Geolocator.distanceBetween(position.latitude,
           position.longitude, cachedLatitude, cachedLongitude);
-      if (distanceMeters > 100000) {
+      if (distanceMeters > 50000) {
         // If the cache is for a point that is too far, return immediately.
         log.info("Discarding cache due to distance: $distanceMeters meters");
         return '';
