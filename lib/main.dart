@@ -33,6 +33,11 @@ class TideData {
   final SplayTreeMap<double, double> heights;
   final Map<double, double> extremes;
 
+  @override
+  String toString() {
+    return "heights: $heights, extremes: $extremes";
+  }
+
   factory TideData.fromJson(Map<String, dynamic> data) {
     // This function does not perform any operation, but simply
     // extracts the values of interest from the JSON.
@@ -65,7 +70,7 @@ class CoordinateConv {
     assert(hour >= 0 && hour <= 24);
     assert(value >= minValue && value <= maxValue);
     return Offset(width / 24 * hour,
-        -(height / (maxValue - minValue) * (value - minValue)));
+            -(height / (maxValue - minValue) * (value - minValue)));
   }
 }
 
@@ -109,6 +114,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   bool _isRunning = false;
   bool _needsRefresh = false;
   TideData? _tideData;
+  double _animationProgress = 1.0;
   DateTime _lastSuccessTimestamp = DateTime.fromMillisecondsSinceEpoch(0);
   Logger log = Logger("Tides");
 
@@ -170,6 +176,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
     Position? position;
     try {
       position = await _determinePosition();
+      log.info("Location: ${position.latitude}, ${position.longitude}");
     } catch (err) {
       log.severe("Location error: $err");
     }
@@ -210,6 +217,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
 
     // Parse data
     _moveTo(AppState.parsingData);
+    log.fine("Body: $body");
     try {
       TideData tideData = _parseBody(body);
       if (isFromServer) {
@@ -218,10 +226,10 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
       }
       log.info("Body with tides parsed successfully");
       _moveTo(AppState.ready, tideData);
+      await _playAnimation();
       _lastSuccessTimestamp = now;
     } catch (err) {
       log.severe("Error parsing the body: $err");
-      log.severe("Body content: $body");
       _moveTo(AppState.errorParsing);
     }
   }
@@ -230,7 +238,19 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
     setState(() {
       _appState = newState;
       _tideData = tideData;
+      _animationProgress = 0.0;
     });
+  }
+
+  Future _playAnimation() async {
+    double stepSize = 1 / 20;
+    for (double i = stepSize; i <= 1; i += stepSize) {
+      // To complete
+      setState(() {
+        _animationProgress = i;
+      });
+      await Future.delayed(const Duration(milliseconds: 25));
+    }
   }
 
   double _metersToFeet(double m) {
@@ -508,7 +528,8 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
                   child: ClipRect(
                       // At this point we know for sure that TideData is available.
                       child: CustomPaint(
-                          painter: TidePainter(_tideData!, DateTime.now()))))),
+                          painter: TidePainter(_tideData!, DateTime.now(),
+                              _animationProgress))))),
         );
         break;
     }
@@ -519,8 +540,9 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
 class TidePainter extends CustomPainter {
   final TideData tideData;
   final DateTime now;
+  final double animationProgress;
 
-  TidePainter(this.tideData, this.now);
+  TidePainter(this.tideData, this.now, this.animationProgress);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -553,11 +575,11 @@ class TidePainter extends CustomPainter {
 
     // Draw polygon with tides
     var points = <Offset>[];
-    points.add(zero + conv.convert(0, minValue));
+    points.add(zero + conv.convert(0, minValue).scale(1, animationProgress));
     for (var entry in tideData.heights.entries) {
-      points.add(zero + conv.convert(entry.key, entry.value));
+      points.add(zero + conv.convert(entry.key, entry.value).scale(1, animationProgress));
     }
-    points.add(zero + conv.convert(24, minValue));
+    points.add(zero + conv.convert(24, minValue).scale(1, animationProgress));
     Path path = Path();
     path.addPolygon(points, true);
     canvas.drawPath(path, paintTides);
@@ -592,14 +614,14 @@ class TidePainter extends CustomPainter {
 
     // Write min and max values and associated dot
     for (var e in tideData.extremes.entries) {
-      canvas.drawCircle(zero + conv.convert(e.key, e.value), 2, paintExtremes);
+      canvas.drawCircle(zero + conv.convert(e.key, e.value).scale(1, animationProgress), 2, paintExtremes);
       String hour = e.key.truncate().toString();
       String minute = ((e.key - e.key.truncate()) * 60)
           .truncate()
           .toString()
           .padLeft(2, "0");
       _writeText(canvas, "$hour:$minute",
-          zero + conv.convert(e.key, e.value) + const Offset(0, -10),
+          zero + conv.convert(e.key, e.value).scale(1, animationProgress) + const Offset(0, -10),
           size: 10);
     }
   }
