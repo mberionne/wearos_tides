@@ -139,6 +139,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
       case AppLifecycleState.paused:
       case AppLifecycleState.detached:
         _needsRefresh = true;
+        _animationProgress = 0;
         break;
       case AppLifecycleState.resumed:
         if (_needsRefresh) {
@@ -167,7 +168,8 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
       // We ran the algorithm recently and we are not requested to force it
       // so we can directly return. This happens only when the app goes to
       // background and then becomes visible again.
-      log.info("Recently displayed - skipping refresh");
+      log.info("Recently displayed - skipping refresh and perform animation");
+      await _playAnimation();
       return;
     }
 
@@ -217,7 +219,6 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
 
     // Parse data
     _moveTo(AppState.parsingData);
-    log.fine("Body: $body");
     try {
       TideData tideData = _parseBody(body);
       if (isFromServer) {
@@ -225,11 +226,13 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
         _setCache(prefs, body, now, position!);
       }
       log.info("Body with tides parsed successfully");
+      log.fine("Tide data: $tideData");
       _moveTo(AppState.ready, tideData);
       await _playAnimation();
       _lastSuccessTimestamp = now;
     } catch (err) {
       log.severe("Error parsing the body: $err");
+      log.severe("Body: $body");
       _moveTo(AppState.errorParsing);
     }
   }
@@ -244,7 +247,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
 
   Future _playAnimation() async {
     double stepSize = 1 / 20;
-    for (double i = stepSize; i <= 1; i += stepSize) {
+    for (double i = 0; i <= 1; i += stepSize) {
       // To complete
       setState(() {
         _animationProgress = i;
@@ -622,12 +625,13 @@ class TidePainter extends CustomPainter {
           .padLeft(2, "0");
       _writeText(canvas, "$hour:$minute",
           zero + conv.convert(e.key, e.value).scale(1, animationProgress) + const Offset(0, -10),
-          size: 10);
+          size: 10,
+          maxSpaceToLeft: conv.convert(e.key, e.value).dx);
     }
   }
 
   void _writeText(Canvas canvas, String text, Offset offset,
-      {double size = 8.0}) {
+      {double size = 8.0, double? maxSpaceToLeft}) {
     TextSpan span = TextSpan(
         style: TextStyle(
             color: Colors.white, fontSize: size, fontWeight: FontWeight.bold),
@@ -637,7 +641,9 @@ class TidePainter extends CustomPainter {
         textDirection: TextDirection.ltr,
         textAlign: TextAlign.center);
     tp.layout();
-    tp.paint(canvas, offset + Offset(-tp.width / 2, -tp.height / 2));
+    double offsetX = tp.width / 2;
+    offsetX = min(offsetX, maxSpaceToLeft ?? offsetX);
+    tp.paint(canvas, offset + Offset(-offsetX, -tp.height / 2));
   }
 
   @override
