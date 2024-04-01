@@ -70,7 +70,7 @@ class CoordinateConv {
     assert(hour >= 0 && hour <= 24);
     assert(value >= minValue && value <= maxValue);
     return Offset(width / 24 * hour,
-            -(height / (maxValue - minValue) * (value - minValue)));
+        -(height / (maxValue - minValue) * (value - minValue)));
   }
 }
 
@@ -503,22 +503,23 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
         ];
         break;
       case AppState.ready:
-        widgets = <Widget>[];
         // Write the station name only if it's available.
-        if ((_tideData?.station ?? "").isNotEmpty) {
-          widgets.add(
-              // Wrap the Text in SizedBox, so that we can truncate the text
-              // if it's too long.
-              SizedBox(
-                  width: MediaQuery.of(context).size.width * 0.6,
-                  child: Center(
-                      child: Text(
-                    _tideData?.station ?? "",
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white),
-                  ))));
-        }
-        widgets.add(
+        bool stationNamePresent = (_tideData?.station ?? "").isNotEmpty;
+        widgets = <Widget>[
+          // Wrap the Text in SizedBox, so that we can truncate the text
+          // if it's too long.
+          SizedBox(
+              width: MediaQuery.of(context).size.width * 0.6,
+              child: Center(
+                  child: Text(
+                stationNamePresent ? _tideData!.station : "Unknown station",
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    color: Colors.white,
+                    fontStyle: stationNamePresent
+                        ? FontStyle.normal
+                        : FontStyle.italic),
+              ))),
           SizedBox(
               width: MediaQuery.of(context).size.width * 0.8,
               height: MediaQuery.of(context).size.height * 0.7,
@@ -533,7 +534,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
                       child: CustomPaint(
                           painter: TidePainter(_tideData!, DateTime.now(),
                               _animationProgress))))),
-        );
+        ];
         break;
     }
     return widgets;
@@ -580,7 +581,8 @@ class TidePainter extends CustomPainter {
     var points = <Offset>[];
     points.add(zero + conv.convert(0, minValue).scale(1, animationProgress));
     for (var entry in tideData.heights.entries) {
-      points.add(zero + conv.convert(entry.key, entry.value).scale(1, animationProgress));
+      points.add(zero +
+          conv.convert(entry.key, entry.value).scale(1, animationProgress));
     }
     points.add(zero + conv.convert(24, minValue).scale(1, animationProgress));
     Path path = Path();
@@ -617,14 +619,21 @@ class TidePainter extends CustomPainter {
 
     // Write min and max values and associated dot
     for (var e in tideData.extremes.entries) {
-      canvas.drawCircle(zero + conv.convert(e.key, e.value).scale(1, animationProgress), 2, paintExtremes);
+      canvas.drawCircle(
+          zero + conv.convert(e.key, e.value).scale(1, animationProgress),
+          2,
+          paintExtremes);
       String hour = e.key.truncate().toString();
       String minute = ((e.key - e.key.truncate()) * 60)
           .truncate()
           .toString()
           .padLeft(2, "0");
-      _writeText(canvas, "$hour:$minute",
-          zero + conv.convert(e.key, e.value).scale(1, animationProgress) + const Offset(0, -10),
+      _writeText(
+          canvas,
+          "$hour:$minute",
+          zero +
+              conv.convert(e.key, e.value).scale(1, animationProgress) +
+              const Offset(0, -10),
           size: 10,
           maxSpaceToLeft: conv.convert(e.key, e.value).dx);
     }
