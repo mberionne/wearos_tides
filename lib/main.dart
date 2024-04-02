@@ -378,8 +378,8 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
       return Future.delayed(
           const Duration(seconds: 2),
           () => Position(
-              latitude: 33.768321,
-              longitude: -118.195617,
+              latitude: 32.93693693693694,
+              longitude: -117.21905287360934,
               accuracy: 1.0,
               altitude: 0,
               altitudeAccuracy: 1.0,
@@ -550,8 +550,10 @@ class TidePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final maxValue = tideData.heights.values.reduce(max).ceil().toDouble();
-    final minValue = tideData.heights.values.reduce(min).floor().toDouble();
+    double minValue = tideData.heights.values.reduce(min);
+    double maxValue = tideData.heights.values.reduce(max);
+    minValue -= (maxValue - minValue) * 0.08;
+    maxValue += (maxValue - minValue) * 0.08;
 
     final paintAxes = Paint()..color = Colors.white24;
     final paintTides = Paint()..color = Colors.lightBlue.shade900;
@@ -566,6 +568,7 @@ class TidePainter extends CustomPainter {
     const double leftMargin = 15;
     const double topMargin = 20;
     const double bottomMargin = 10;
+    const double tickLen = 2;
     final zero = Offset(leftMargin, size.height - bottomMargin);
     CoordinateConv conv = CoordinateConv(
         minValue: minValue,
@@ -591,25 +594,27 @@ class TidePainter extends CustomPainter {
 
     // Draw X axis
     canvas.drawLine(zero, zero + conv.convert(24, minValue), paintAxes);
-    for (double hour in tideData.heights.keys) {
-      // Skip entries that are not round
-      if (hour != hour.toInt()) {
-        continue;
-      }
-      Offset t = conv.convert(hour, minValue);
-      canvas.drawLine(zero + t, zero + t + const Offset(0, 2), paintAxes);
+    for (int hour = 0; hour <= 24; hour++) {
+      Offset offset = conv.convert(hour.toDouble(), minValue);
+      canvas.drawLine(
+          zero + offset, zero + offset + const Offset(0, tickLen), paintAxes);
       if (hour > 0 && hour.toInt() % 3 == 0) {
-        _writeText(canvas, hour.toInt().toString(),
-            zero + t + const Offset(0, bottomMargin / 2));
+        final tp = _prepareText(hour.toInt().toString(), fontSize: 8);
+        tp.paint(canvas, zero + offset + Offset(-tp.width / 2, tickLen));
       }
     }
     // Draw Y axis
     canvas.drawLine(zero, zero + conv.convert(0, maxValue), paintAxes);
-    for (double i = minValue; i <= maxValue; i++) {
-      Offset t = conv.convert(0, i);
-      canvas.drawLine(zero + t, zero + t + const Offset(-2, 0), paintAxes);
-      _writeText(canvas, i.toInt().toString(),
-          zero + t + const Offset(-leftMargin / 2, 0));
+    for (int i = minValue.ceil(); i <= maxValue; i++) {
+      Offset offset = conv.convert(0, i.toDouble());
+      canvas.drawLine(
+          zero + offset, zero + offset + const Offset(-tickLen, 0), paintAxes);
+      final tp = _prepareText(i.toString(), fontSize: 8);
+      tp.paint(
+          canvas,
+          zero +
+              offset +
+              Offset(-leftMargin / 2 - tp.width / 2, -tp.height / 2));
     }
 
     // Draw line of current time
@@ -617,7 +622,8 @@ class TidePainter extends CustomPainter {
     canvas.drawLine(zero + conv.convert(currentHour, minValue),
         zero + conv.convert(currentHour, maxValue), paintCurrentTime);
 
-    // Write min and max values and associated dot
+    // Write min and max values and associated dots
+    Rect previousTextRect = const Rect.fromLTWH(0, 0, 0, 0);
     for (var e in tideData.extremes.entries) {
       canvas.drawCircle(
           zero + conv.convert(e.key, e.value).scale(1, animationProgress),
@@ -628,31 +634,46 @@ class TidePainter extends CustomPainter {
           .truncate()
           .toString()
           .padLeft(2, "0");
-      _writeText(
-          canvas,
-          "$hour:$minute",
-          zero +
-              conv.convert(e.key, e.value).scale(1, animationProgress) +
-              const Offset(0, -10),
-          size: 10,
-          maxSpaceToLeft: conv.convert(e.key, e.value).dx);
+      final tp = _prepareText("$hour:$minute", fontSize: 10);
+      Offset textOffset = conv.convert(e.key, e.value);
+      // Scale the offset based on the animation progress.
+      textOffset = textOffset.scale(1, animationProgress);
+      // Move the text up to avoid writing over the dot.
+      textOffset += Offset(0, -10 - tp.height / 2);
+      // If the text is too much left (out of chart), move it to the right.
+      textOffset += Offset(-min(tp.width / 2, textOffset.dx), 0);
+      // If the text is too much right (out of chart), move it to the left.
+      textOffset += Offset(
+          -max(textOffset.dx + tp.width - conv.convert(24, minValue).dx, 0.0),
+          0);
+      // Calculate the Rect containing the text. If there is any intersection
+      // with the previous one, then we need to move the text up.
+      Rect textRect =
+          Rect.fromPoints(textOffset, textOffset + Offset(tp.width, tp.height));
+      if (textRect.contains(previousTextRect.bottomRight) ||
+          textRect.contains(previousTextRect.topRight)) {
+        final shift = Offset(0, -tp.height);
+        textOffset += shift;
+        textRect.shift(shift);
+      }
+      tp.paint(canvas, zero + textOffset);
+      previousTextRect = textRect;
     }
   }
 
-  void _writeText(Canvas canvas, String text, Offset offset,
-      {double size = 8.0, double? maxSpaceToLeft}) {
+  TextPainter _prepareText(String text, {double fontSize = 8}) {
     TextSpan span = TextSpan(
         style: TextStyle(
-            color: Colors.white, fontSize: size, fontWeight: FontWeight.bold),
+            color: Colors.white,
+            fontSize: fontSize,
+            fontWeight: FontWeight.bold),
         text: text);
     TextPainter tp = TextPainter(
         text: span,
         textDirection: TextDirection.ltr,
         textAlign: TextAlign.center);
     tp.layout();
-    double offsetX = tp.width / 2;
-    offsetX = min(offsetX, maxSpaceToLeft ?? offsetX);
-    tp.paint(canvas, offset + Offset(-offsetX, -tp.height / 2));
+    return tp;
   }
 
   @override
