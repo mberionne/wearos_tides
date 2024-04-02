@@ -42,6 +42,7 @@ dependencies:
   equations: ^5.0.2
   logging_to_logcat: ^1.0.0
   logging: ^1.2.0
+  sunrise_sunset_calc: ^3.0.0
 
 dev_dependencies:
   flutter_test:

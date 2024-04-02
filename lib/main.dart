@@ -11,6 +11,7 @@ import 'package:intl/intl.dart' as intl;
 import 'package:logging_to_logcat/logging_to_logcat.dart';
 import 'package:logging/logging.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:sunrise_sunset_calc/sunrise_sunset_calc.dart';
 
 enum AppState {
   init,
@@ -114,6 +115,8 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   bool _isRunning = false;
   bool _needsRefresh = false;
   TideData? _tideData;
+  DateTime? _sunrise;
+  DateTime? _sunset;
   double _animationProgress = 1.0;
   DateTime _lastSuccessTimestamp = DateTime.fromMillisecondsSinceEpoch(0);
   Logger log = Logger("Tides");
@@ -217,8 +220,13 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
       return;
     }
 
-    // Parse data
+    // Parse data (this stage includes the calculation of sunrise and sunset)
     _moveTo(AppState.parsingData);
+    DateTime? sunrise, sunset;
+    if (position != null) {
+      (sunrise, sunset) =
+          _calculateSunriseSunset(now, position.latitude, position.longitude);
+    }
     try {
       TideData tideData = _parseBody(body);
       if (isFromServer) {
@@ -227,7 +235,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
       }
       log.info("Body with tides parsed successfully");
       log.fine("Tide data: $tideData");
-      _moveTo(AppState.ready, tideData);
+      _moveTo(AppState.ready, tideData, sunrise, sunset);
       await _playAnimation();
       _lastSuccessTimestamp = now;
     } catch (err) {
@@ -237,10 +245,13 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
     }
   }
 
-  _moveTo(AppState newState, [TideData? tideData]) {
+  _moveTo(AppState newState,
+      [TideData? tideData, DateTime? sunrise, DateTime? sunset]) {
     setState(() {
       _appState = newState;
       _tideData = tideData;
+      _sunrise = sunrise;
+      _sunset = sunset;
       _animationProgress = 0.0;
     });
   }
@@ -431,6 +442,14 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
         timeLimit: const Duration(seconds: 8));
   }
 
+  (DateTime, DateTime) _calculateSunriseSunset(
+      DateTime now, double latitude, double longitude) {
+    var sunriseSunset =
+        getSunriseSunset(latitude, longitude, now.timeZoneOffset, now);
+    log.info("Sunrise: ${sunriseSunset.sunrise}, Sunset: ${sunriseSunset.sunset}");
+    return (sunriseSunset.sunrise, sunriseSunset.sunset);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -532,8 +551,8 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
                   child: ClipRect(
                       // At this point we know for sure that TideData is available.
                       child: CustomPaint(
-                          painter: TidePainter(_tideData!, DateTime.now(),
-                              _animationProgress))))),
+                          painter: TidePainter(_tideData!, _sunrise, _sunset,
+                              DateTime.now(), _animationProgress))))),
         ];
         break;
     }
@@ -543,10 +562,12 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
 
 class TidePainter extends CustomPainter {
   final TideData tideData;
+  final DateTime? sunrise, sunset;
   final DateTime now;
   final double animationProgress;
 
-  TidePainter(this.tideData, this.now, this.animationProgress);
+  TidePainter(this.tideData, this.sunrise, this.sunset, this.now,
+      this.animationProgress);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -558,7 +579,8 @@ class TidePainter extends CustomPainter {
     final paintAxes = Paint()..color = Colors.white24;
     final paintTides = Paint()..color = Colors.lightBlue.shade900;
     final paintExtremes = Paint()..color = Colors.lightBlue.shade100;
-    final paintBackground = Paint()..color = Colors.grey.shade800;
+    final paintBackgroundNight = Paint()..color = Colors.grey.shade900;
+    final paintBackgroundDay = Paint()..color = Colors.grey.shade800;
     final paintCurrentTime = Paint()
       ..color = Colors.yellow.shade200
       ..strokeWidth = 2;
@@ -578,7 +600,14 @@ class TidePainter extends CustomPainter {
 
     // Draw background of the chart
     canvas.drawRect(Rect.fromPoints(zero, zero + conv.convert(24, maxValue)),
-        paintBackground);
+        paintBackgroundNight);
+    if (sunrise != null && sunset != null) {
+      canvas.drawRect(
+          Rect.fromPoints(
+              zero + conv.convert(_dateTimeToDouble(sunrise!), minValue),
+              zero + conv.convert(_dateTimeToDouble(sunset!), maxValue)),
+          paintBackgroundDay);
+    }
 
     // Draw polygon with tides
     var points = <Offset>[];
@@ -618,7 +647,7 @@ class TidePainter extends CustomPainter {
     }
 
     // Draw line of current time
-    double currentHour = now.hour + (now.minute / 60);
+    double currentHour = _dateTimeToDouble(now);
     canvas.drawLine(zero + conv.convert(currentHour, minValue),
         zero + conv.convert(currentHour, maxValue), paintCurrentTime);
 
@@ -652,13 +681,18 @@ class TidePainter extends CustomPainter {
           Rect.fromPoints(textOffset, textOffset + Offset(tp.width, tp.height));
       if (textRect.contains(previousTextRect.bottomRight) ||
           textRect.contains(previousTextRect.topRight)) {
-        final shift = Offset(0, -tp.height - (textRect.top - previousTextRect.top));
+        final shift =
+            Offset(0, -tp.height - (textRect.top - previousTextRect.top));
         textOffset += shift;
         textRect.shift(shift);
       }
       tp.paint(canvas, zero + textOffset);
       previousTextRect = textRect;
     }
+  }
+
+  double _dateTimeToDouble(DateTime dateTime) {
+    return dateTime.hour + (dateTime.minute / 60);
   }
 
   TextPainter _prepareText(String text, {double fontSize = 8}) {
