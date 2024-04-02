@@ -652,7 +652,7 @@ class TidePainter extends CustomPainter {
           Rect.fromPoints(textOffset, textOffset + Offset(tp.width, tp.height));
       if (textRect.contains(previousTextRect.bottomRight) ||
           textRect.contains(previousTextRect.topRight)) {
-        final shift = Offset(0, -tp.height);
+        final shift = Offset(0, -tp.height - (textRect.top - previousTextRect.top));
         textOffset += shift;
         textRect.shift(shift);
       }
