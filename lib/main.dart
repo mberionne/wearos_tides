@@ -7,7 +7,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
-import 'package:intl/intl.dart' as intl;
 import 'package:logging_to_logcat/logging_to_logcat.dart';
 import 'package:logging/logging.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -275,14 +274,21 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
     return ms / 3600;
   }
 
+  // Calculate a unique ID for each day.
+  int _dateId(DateTime date) {
+    final fixedDate = DateTime(2024, 3, 18); // Arbitrary start
+    final onlyDate = DateTime(date.year, date.month, date.day);
+    // We can safely ignore the case of short days due to DST.
+    return onlyDate.difference(fixedDate).inDays;
+  }
+
   String _getCacheIfValid(
       SharedPreferences prefs, DateTime now, Position? position) {
     // Check date
-    String cachedDate = prefs.getString('date') ?? '';
-    if (cachedDate.isEmpty ||
-        cachedDate != intl.DateFormat('yyyy-MM-dd').format(now)) {
+    int cachedDateId = prefs.getInt('dateid') ?? 0;
+    if (cachedDateId == 0 || cachedDateId != _dateId(now)) {
       // If the cache is for a different day, return immediately.
-      log.info("Discarding cache from a different day: $cachedDate");
+      log.info("Discarding cache from a different day: $cachedDateId");
       return '';
     }
     // Check location
@@ -308,7 +314,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
 
   void _setCache(
       SharedPreferences prefs, String value, DateTime now, Position position) {
-    prefs.setString('date', intl.DateFormat('yyyy-MM-dd').format(now));
+    prefs.setInt('dateid', _dateId(now));
     prefs.setString('value', value);
     prefs.setDouble('lat', position.latitude);
     prefs.setDouble('lon', position.longitude);
@@ -446,7 +452,8 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
       DateTime now, double latitude, double longitude) {
     var sunriseSunset =
         getSunriseSunset(latitude, longitude, now.timeZoneOffset, now);
-    log.info("Sunrise: ${sunriseSunset.sunrise}, Sunset: ${sunriseSunset.sunset}");
+    log.info(
+        "Sunrise: ${sunriseSunset.sunrise}, Sunset: ${sunriseSunset.sunset}");
     return (sunriseSunset.sunrise, sunriseSunset.sunset);
   }
 
@@ -577,10 +584,12 @@ class TidePainter extends CustomPainter {
     maxValue += (maxValue - minValue) * 0.08;
 
     final paintAxes = Paint()..color = Colors.white24;
-    final paintTides = Paint()..color = Colors.lightBlue.shade900;
+    final paintTicks = Paint()..color = Colors.white;
+    final paintTides = Paint()
+      ..color = Colors.lightBlue.shade800.withAlpha(210);
     final paintExtremes = Paint()..color = Colors.lightBlue.shade100;
     final paintBackgroundNight = Paint()..color = Colors.grey.shade900;
-    final paintBackgroundDay = Paint()..color = Colors.grey.shade800;
+    final paintBackgroundDay = Paint()..color = Colors.grey.shade600;
     final paintCurrentTime = Paint()
       ..color = Colors.yellow.shade200
       ..strokeWidth = 2;
@@ -626,7 +635,7 @@ class TidePainter extends CustomPainter {
     for (int hour = 0; hour <= 24; hour++) {
       Offset offset = conv.convert(hour.toDouble(), minValue);
       canvas.drawLine(
-          zero + offset, zero + offset + const Offset(0, tickLen), paintAxes);
+          zero + offset, zero + offset + const Offset(0, tickLen), paintTicks);
       if (hour > 0 && hour.toInt() % 3 == 0) {
         final tp = _prepareText(hour.toInt().toString(), fontSize: 8);
         tp.paint(canvas, zero + offset + Offset(-tp.width / 2, tickLen));
@@ -637,7 +646,7 @@ class TidePainter extends CustomPainter {
     for (int i = minValue.ceil(); i <= maxValue; i++) {
       Offset offset = conv.convert(0, i.toDouble());
       canvas.drawLine(
-          zero + offset, zero + offset + const Offset(-tickLen, 0), paintAxes);
+          zero + offset, zero + offset + const Offset(-tickLen, 0), paintTicks);
       final tp = _prepareText(i.toString(), fontSize: 8);
       tp.paint(
           canvas,
