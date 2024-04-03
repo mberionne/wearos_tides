@@ -5,6 +5,7 @@ import 'dart:math';
 import 'package:equations/equations.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:logging_to_logcat/logging_to_logcat.dart';
@@ -74,7 +75,9 @@ class CoordinateConv {
   }
 }
 
-void main() {
+Future main() async {
+  // Load env variables
+  await dotenv.load(fileName: ".env");
   // Activate logging
   Logger.root.activateLogcat();
   Logger.root.level = Level.ALL;
@@ -368,7 +371,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
         "extremes&"
         "lat=$latitude&lon=$longitude&"
         "step=3600&"
-        "key=8280c866-8a82-44e8-8943-c542836f15af");
+        "key=${dotenv.env['API_KEY']}");
   }
 
   Future<String> _fetchDataFromServer(double latitude, double longitude) async {
