@@ -366,21 +366,18 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   }
 
   Uri _composeUri(double latitude, double longitude) {
-    return Uri.parse("https://www.worldtides.info/api/v3?"
+    String key = dotenv.env['API_KEY'] ?? "";
+    String uriStringNoKey = "https://www.worldtides.info/api/v3?"
         "heights&days=1&date=today&datum=CD&"
         "extremes&"
         "lat=$latitude&lon=$longitude&"
-        "step=3600&"
-        "key=${dotenv.env['API_KEY']}");
+        "step=3600";
+    log.info("URI for request (without key): $uriStringNoKey");
+    return Uri.parse("$uriStringNoKey&key=$key");
   }
 
   Future<String> _fetchDataFromServer(double latitude, double longitude) async {
     final uri = _composeUri(latitude, longitude);
-
-    String debugUri = uri.toString();
-    debugUri = debugUri.substring(0, debugUri.indexOf("key="));
-    log.info("URI for request (without key): $debugUri");
-
     final response = await http.get(uri).timeout(const Duration(seconds: 8));
     if (response.statusCode == 200) {
       return response.body;
