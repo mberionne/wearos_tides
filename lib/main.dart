@@ -10,6 +10,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:logging_to_logcat/logging_to_logcat.dart';
 import 'package:logging/logging.dart';
+import 'package:point_in_polygon/point_in_polygon.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sunrise_sunset_calc/sunrise_sunset_calc.dart';
 
@@ -27,12 +28,21 @@ enum AppState {
   errorParsing,
 }
 
+enum Unit {
+  meters,
+  feet,
+}
+
 class TideData {
   TideData(
-      {required this.station, required this.heights, required this.extremes});
+      {required this.station,
+      required this.heights,
+      required this.extremes,
+      required this.unit});
   final String station;
   final SplayTreeMap<double, double> heights;
   final Map<double, double> extremes;
+  final Unit unit;
 
   @override
   String toString() {
@@ -51,8 +61,12 @@ class TideData {
     for (final extreme in data['extremes']) {
       extremes[extreme['dt'].toDouble()] = extreme['height'].toDouble();
     }
+    // The data received in the JSON is always in meters.
     return TideData(
-        station: station ?? "", heights: heights, extremes: extremes);
+        station: station ?? "",
+        heights: heights,
+        extremes: extremes,
+        unit: Unit.meters);
   }
 }
 
@@ -225,12 +239,14 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
     // Parse data (this stage includes the calculation of sunrise and sunset)
     _moveTo(AppState.parsingData);
     DateTime? sunrise, sunset;
+    Unit unit = Unit.feet;
     if (position != null) {
       (sunrise, sunset) =
           _calculateSunriseSunset(now, position.latitude, position.longitude);
+      unit = _calculateUnit(position.latitude, position.longitude);
     }
     try {
-      TideData tideData = _parseBody(body);
+      TideData tideData = _parseBody(body, unit);
       if (isFromServer) {
         // Position must be known if we retrieve content from server.
         _setCache(prefs, body, now, position!);
@@ -323,7 +339,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
     prefs.setDouble('lon', position.longitude);
   }
 
-  TideData _parseBody(String body) {
+  TideData _parseBody(String body, Unit unit) {
     // Parse the JSON and verify the correctness.
     Map<String, dynamic> map = jsonDecode(body);
     int result = map['status'];
@@ -342,7 +358,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
     SplayTreeMap<double, double> h = SplayTreeMap<double, double>.fromIterable(
         tideData.heights.entries,
         key: (e) => _epochToHour(e.key - minTimestamp),
-        value: (e) => _metersToFeet(e.value));
+        value: (e) => unit == Unit.feet ? _metersToFeet(e.value) : e.value);
     h.removeWhere((key, value) => key > 24);
     // Create interpolation points using Spline algorithm
     final spline = SplineInterpolation(
@@ -362,7 +378,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
     Map<double, double> e = tideData.extremes.map((key, value) =>
         MapEntry(_epochToHour(key - minTimestamp), _metersToFeet(value)));
 
-    return TideData(station: station, heights: h, extremes: e);
+    return TideData(station: station, heights: h, extremes: e, unit: unit);
   }
 
   Uri _composeUri(double latitude, double longitude) {
@@ -395,6 +411,10 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
       return Future.delayed(
           const Duration(seconds: 2),
           () => Position(
+              // Somewhere in Canada
+              // latitude: 44.96786648111967,
+              // longitude: -61.92402808706994,
+              // Somewhere in the US
               latitude: 32.93693693693694,
               longitude: -117.21905287360934,
               accuracy: 1.0,
@@ -455,6 +475,48 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
     log.info(
         "Sunrise: ${sunriseSunset.sunrise}, Sunset: ${sunriseSunset.sunset}");
     return (sunriseSunset.sunrise, sunriseSunset.sunset);
+  }
+
+  // Returns the unit of measure to be used based on the location.
+  // This function uses a rough approximation of the US as it is
+  // OK to use the wrong unit right next to the border.
+  Unit _calculateUnit(double latitude, double longitude) {
+    final List<Point> polygonContinentalUs = <Point>[
+      Point(x: -126.1248252, y: 49.0397314),
+      Point(x: -124.6306846, y: 32.4380122),
+      Point(x: -106.6131064, y: 31.6932006),
+      Point(x: -97.3845908, y: 25.9210829),
+      Point(x: -80.0701377, y: 24.6496008),
+      Point(x: -66.7986533, y: 44.1842425),
+      Point(x: -68.6443564, y: 47.7264568),
+      Point(x: -71.1406083, y: 45.3783095),
+      Point(x: -74.0056846, y: 45.0600094),
+      Point(x: -82.0916221, y: 41.8061971),
+      Point(x: -83.629708, y: 46.409524),
+      Point(x: -94.8357627, y: 48.9820826),
+    ];
+    final List<Point> polygonAlaska = <Point>[
+      Point(x: -140.9883337, y: 72.1624613),
+      Point(x: -167.6191931, y: 72.3765883),
+      Point(x: -169.7552027, y: 58.9312314),
+      Point(x: -179.6602087, y: 49.8539187),
+      Point(x: -141.3398962, y: 49.1691306),
+    ];
+    final List<Point> polygonHawaii = <Point>[
+      Point(x: -162.8950747, y: 23.159566),
+      Point(x: -162.9829653, y: 17.5592124),
+      Point(x: -152.6118716, y: 17.4334757),
+      Point(x: -152.6118716, y: 23.119156),
+    ];
+    final Point currentLocation = Point(x: longitude, y: latitude);
+    if (Poly.isPointInPolygon(currentLocation, polygonContinentalUs) ||
+        Poly.isPointInPolygon(currentLocation, polygonAlaska) ||
+        Poly.isPointInPolygon(currentLocation, polygonHawaii)) {
+      log.info("Location within the US - Use feet");
+      return Unit.feet;
+    }
+    log.info("Location outside the US - Use meters");
+    return Unit.meters;
   }
 
   @override
@@ -529,7 +591,6 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
         ];
         break;
       case AppState.ready:
-        // Write the station name only if it's available.
         bool stationNamePresent = (_tideData?.station ?? "").isNotEmpty;
         widgets = <Widget>[
           // Wrap the Text in SizedBox, so that we can truncate the text
@@ -547,13 +608,15 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
                         : FontStyle.italic),
               ))),
           SizedBox(
-              width: MediaQuery.of(context).size.width * 0.8,
+              // We reducde the height so that it is centered correctly.
+              // Pass the entire width and handle margins in the painter.
+              width: MediaQuery.of(context).size.width,
               height: MediaQuery.of(context).size.height * 0.7,
               child: GestureDetector(
                   onDoubleTap: () {
-                    if (_appState == AppState.ready) {
-                      _mainFlow(force: true);
-                    }
+                    // This is displayed only for ready state, so no need to
+                    // check it explicitly.
+                    _mainFlow(force: true);
                   },
                   child: ClipRect(
                       // At this point we know for sure that TideData is available.
@@ -595,8 +658,8 @@ class TidePainter extends CustomPainter {
       ..strokeWidth = 2;
 
     // Values for the chart
-    const double rightMargin = 10;
-    const double leftMargin = 15;
+    final double rightMargin = (size.width * 0.1) + 10;
+    final double leftMargin = (size.width * 0.1) + 15;
     const double topMargin = 20;
     const double bottomMargin = 10;
     const double tickLen = 2;
@@ -643,17 +706,41 @@ class TidePainter extends CustomPainter {
     }
     // Draw Y axis
     canvas.drawLine(zero, zero + conv.convert(0, maxValue), paintAxes);
-    for (int i = minValue.ceil(); i <= maxValue; i++) {
-      Offset offset = conv.convert(0, i.toDouble());
+    double yRange = (maxValue - minValue);
+    double yStep = 1;
+    double yStart = minValue.ceil().toDouble();
+    if (yRange < 0.5) {
+      yStep = 0.1;
+      yStart = (minValue * 10).ceil().toDouble() / 10.0;
+    } else if (yRange < 1.5) {
+      yStep = 0.2;
+      yStart = (minValue * 5).ceil().toDouble() / 5.0;
+    } else if (yRange < 4) {
+      yStep = 0.5;
+      yStart = (minValue * 2).ceil().toDouble() / 2.0;
+    } else if (yRange < 8) {
+      yStep = 1;
+    } else if (yRange < 16) {
+      yStep = 2;
+    } else if (yRange < 24) {
+      yStep = 3;
+    } else {
+      yStep = 4;
+    }
+    for (double i = yStart; i <= maxValue; i += yStep) {
+      Offset offset = conv.convert(0, i);
       canvas.drawLine(
           zero + offset, zero + offset + const Offset(-tickLen, 0), paintTicks);
-      final tp = _prepareText(i.toString(), fontSize: 8);
-      tp.paint(
-          canvas,
-          zero +
-              offset +
-              Offset(-leftMargin / 2 - tp.width / 2, -tp.height / 2));
+      final tp = _prepareText(_doubleToString(i, 1), fontSize: 8);
+      tp.paint(canvas,
+          zero + offset + Offset(-tp.width - tickLen - 1, -tp.height / 2));
     }
+    final unitTp = _prepareText(tideData.unit == Unit.feet ? "ft" : "m", fontSize: 8);
+    unitTp.paint(
+        canvas,
+        zero +
+            conv.convert(0, maxValue) +
+            Offset(-unitTp.width - tickLen, -unitTp.height));
 
     // Draw line of current time
     double currentHour = _dateTimeToDouble(now);
@@ -667,12 +754,7 @@ class TidePainter extends CustomPainter {
           zero + conv.convert(e.key, e.value).scale(1, animationProgress),
           2,
           paintExtremes);
-      String hour = e.key.truncate().toString();
-      String minute = ((e.key - e.key.truncate()) * 60)
-          .truncate()
-          .toString()
-          .padLeft(2, "0");
-      final tp = _prepareText("$hour:$minute", fontSize: 10);
+      final tp = _prepareText(_timeToString(e.key), fontSize: 10);
       Offset textOffset = conv.convert(e.key, e.value);
       // Scale the offset based on the animation progress.
       textOffset = textOffset.scale(1, animationProgress);
@@ -702,6 +784,24 @@ class TidePainter extends CustomPainter {
 
   double _dateTimeToDouble(DateTime dateTime) {
     return dateTime.hour + (dateTime.minute / 60);
+  }
+
+  String _timeToString(double time) {
+    String hour = time.truncate().toString();
+    String minute =
+        ((time - time.truncate()) * 60).truncate().toString().padLeft(2, "0");
+    return "$hour:$minute";
+  }
+
+  String _doubleToString(double value, int maxDecimalDigits) {
+    String s = value.toStringAsFixed(maxDecimalDigits);
+    if (s.indexOf(".") > 0) {
+      s = s.replaceAll(RegExp(r'\.0*$'), "");
+    }
+    if (s == "-0") {
+      s = "0";
+    }
+    return s;
   }
 
   TextPainter _prepareText(String text, {double fontSize = 8}) {
