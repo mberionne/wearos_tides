@@ -33,6 +33,13 @@ enum Unit {
   feet,
 }
 
+class SunTime {
+  SunTime({required this.sunrise, required this.sunset});
+
+  final DateTime sunrise;
+  final DateTime sunset;
+}
+
 class TideData {
   TideData(
       {required this.station,
@@ -52,14 +59,14 @@ class TideData {
   factory TideData.fromJson(Map<String, dynamic> data) {
     // This function does not perform any operation, but simply
     // extracts the values of interest from the JSON.
-    var station = data['station']; // dynamic
+    var station = data["station"]; // dynamic
     SplayTreeMap<double, double> heights = SplayTreeMap();
-    for (final height in data['heights']) {
-      heights[height['dt'].toDouble()] = height['height'].toDouble();
+    for (final height in data["heights"]) {
+      heights[height["dt"].toDouble()] = height["height"].toDouble();
     }
     Map<double, double> extremes = {};
-    for (final extreme in data['extremes']) {
-      extremes[extreme['dt'].toDouble()] = extreme['height'].toDouble();
+    for (final extreme in data["extremes"]) {
+      extremes[extreme["dt"].toDouble()] = extreme["height"].toDouble();
     }
     // The data received in the JSON is always in meters.
     return TideData(
@@ -106,7 +113,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Tides',
+      title: "Tides",
       theme: ThemeData(
         scaffoldBackgroundColor: Colors.black,
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.black),
@@ -131,8 +138,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   bool _isRunning = false;
   bool _needsRefresh = false;
   TideData? _tideData;
-  DateTime? _sunrise;
-  DateTime? _sunset;
+  SunTime? _sunTime;
   double _animationProgress = 1.0;
   DateTime _lastSuccessTimestamp = DateTime.fromMillisecondsSinceEpoch(0);
   Logger log = Logger("Tides");
@@ -238,10 +244,10 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
 
     // Parse data (this stage includes the calculation of sunrise and sunset)
     _moveTo(AppState.parsingData);
-    DateTime? sunrise, sunset;
+    SunTime? sunTime;
     Unit unit = Unit.feet;
     if (position != null) {
-      (sunrise, sunset) =
+      sunTime =
           _calculateSunriseSunset(now, position.latitude, position.longitude);
       unit = _calculateUnit(position.latitude, position.longitude);
     }
@@ -253,7 +259,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
       }
       log.info("Body with tides parsed successfully");
       log.fine("Tide data: $tideData");
-      _moveTo(AppState.ready, tideData, sunrise, sunset);
+      _moveTo(AppState.ready, tideData, sunTime);
       await _playAnimation();
       _lastSuccessTimestamp = now;
     } catch (err) {
@@ -264,12 +270,11 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   }
 
   _moveTo(AppState newState,
-      [TideData? tideData, DateTime? sunrise, DateTime? sunset]) {
+      [TideData? tideData, SunTime? sunTime]) {
     setState(() {
       _appState = newState;
       _tideData = tideData;
-      _sunrise = sunrise;
-      _sunset = sunset;
+      _sunTime = sunTime;
       _animationProgress = 0.0;
     });
   }
@@ -304,45 +309,45 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   String _getCacheIfValid(
       SharedPreferences prefs, DateTime now, Position? position) {
     // Check date
-    int cachedDateId = prefs.getInt('dateid') ?? 0;
+    int cachedDateId = prefs.getInt("dateid") ?? 0;
     if (cachedDateId == 0 || cachedDateId != _dateId(now)) {
       // If the cache is for a different day, return immediately.
       log.info("Discarding cache from a different day: $cachedDateId");
-      return '';
+      return "";
     }
     // Check location
     if (position != null) {
-      double? cachedLatitude = prefs.getDouble('lat');
-      double? cachedLongitude = prefs.getDouble('lon');
+      double? cachedLatitude = prefs.getDouble("lat");
+      double? cachedLongitude = prefs.getDouble("lon");
       if (cachedLatitude == null || cachedLongitude == null) {
-        return '';
+        return "";
       }
       double distanceMeters = Geolocator.distanceBetween(position.latitude,
           position.longitude, cachedLatitude, cachedLongitude);
       if (distanceMeters > 50000) {
         // If the cache is for a point that is too far, return immediately.
         log.info("Discarding cache due to distance: $distanceMeters meters");
-        return '';
+        return "";
       }
     }
     // Retrieve cached value
-    String cachedValue = prefs.getString('value') ?? '';
+    String cachedValue = prefs.getString("value") ?? "";
     log.info("Body retrieved from cache (${cachedValue.length} bytes)");
     return cachedValue;
   }
 
   void _setCache(
       SharedPreferences prefs, String value, DateTime now, Position position) {
-    prefs.setInt('dateid', _dateId(now));
-    prefs.setString('value', value);
-    prefs.setDouble('lat', position.latitude);
-    prefs.setDouble('lon', position.longitude);
+    prefs.setInt("dateid", _dateId(now));
+    prefs.setString("value", value);
+    prefs.setDouble("lat", position.latitude);
+    prefs.setDouble("lon", position.longitude);
   }
 
   TideData _parseBody(String body, Unit unit) {
     // Parse the JSON and verify the correctness.
     Map<String, dynamic> map = jsonDecode(body);
-    int result = map['status'];
+    int result = map["status"];
     if (result != 200) {
       log.severe("Invalid result: $result");
       throw Exception("Invalid result received ($result)");
@@ -351,7 +356,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
     // Reduce the length of station name (to be displayed easily)
     String station = "";
     if (tideData.station.isNotEmpty) {
-      station = tideData.station.split(',')[0];
+      station = tideData.station.split(",")[0];
     }
     // Normalize the timestamp in hours and the values in feet.
     double minTimestamp = tideData.heights.keys.reduce(min);
@@ -382,7 +387,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   }
 
   Uri _composeUri(double latitude, double longitude) {
-    String key = dotenv.env['API_KEY'] ?? "";
+    String key = dotenv.env["API_KEY"] ?? "";
     String uriStringNoKey = "https://www.worldtides.info/api/v3?"
         "heights&days=1&date=today&datum=CD&"
         "extremes&"
@@ -400,7 +405,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
     } else {
       log.severe("Error response from server - code: ${response.statusCode}");
       log.severe("Error response from server - body: ${response.body}");
-      throw Exception('Error response from server');
+      throw Exception("Error response from server");
     }
   }
 
@@ -433,7 +438,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
       // Location services are not enabled don't continue
       // accessing the position and request users of the
       // App to enable the location services.
-      return Future.error('Location is disabled.');
+      return Future.error("Location is disabled.");
     }
     LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
@@ -444,12 +449,12 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
         // Android's shouldShowRequestPermissionRationale
         // returned true. According to Android guidelines
         // your App should show an explanatory UI now.
-        return Future.error('Location is denied');
+        return Future.error("Location is denied");
       }
     }
     if (permission == LocationPermission.deniedForever) {
       // Permissions are denied forever, handle appropriately.
-      return Future.error('Location is permanently denied');
+      return Future.error("Location is permanently denied");
     }
     // When we reach here, permissions are granted and we can
     // continue accessing the position of the device.
@@ -468,13 +473,27 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
         timeLimit: const Duration(seconds: 8));
   }
 
-  (DateTime, DateTime) _calculateSunriseSunset(
+  SunTime? _calculateSunriseSunset(
       DateTime now, double latitude, double longitude) {
-    var sunriseSunset =
-        getSunriseSunset(latitude, longitude, now.timeZoneOffset, now);
-    log.info(
-        "Sunrise: ${sunriseSunset.sunrise}, Sunset: ${sunriseSunset.sunset}");
-    return (sunriseSunset.sunrise, sunriseSunset.sunset);
+    try {
+      var value =
+          getSunriseSunset(latitude, longitude, now.timeZoneOffset, now);
+      log.info("Sunrise: ${value.sunrise}, Sunset: ${value.sunset}");
+      // The values returned by getSunriseSunset are in UTC, so use UTC time
+      // to validate them.
+      final dayStart = DateTime.utc(now.year, now.month, now.day);
+      final dayEnd = dayStart.add(const Duration(hours: 24));
+      if (value.sunrise.isBefore(dayStart) ||
+          value.sunset.isAfter(dayEnd) ||
+          value.sunrise.isAfter(value.sunset)) {
+        log.severe("Unable to validate sunrise and sunset");
+        return null;
+      }
+      return SunTime(sunrise: value.sunrise, sunset: value.sunset);
+    } catch (err) {
+      log.severe("Exception on sunrise and sunset: $err");
+      return null;
+    }
   }
 
   // Returns the unit of measure to be used based on the location.
@@ -585,7 +604,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
             style: const TextStyle(fontSize: 20, color: Colors.white),
           ),
           ElevatedButton(
-            child: const Text('Retry'),
+            child: const Text("Retry"),
             onPressed: () => _mainFlow(force: true),
           ),
         ];
@@ -621,7 +640,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
                   child: ClipRect(
                       // At this point we know for sure that TideData is available.
                       child: CustomPaint(
-                          painter: TidePainter(_tideData!, _sunrise, _sunset,
+                          painter: TidePainter(_tideData!, _sunTime,
                               DateTime.now(), _animationProgress))))),
         ];
         break;
@@ -632,11 +651,11 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
 
 class TidePainter extends CustomPainter {
   final TideData tideData;
-  final DateTime? sunrise, sunset;
+  final SunTime? sunTime;
   final DateTime now;
   final double animationProgress;
 
-  TidePainter(this.tideData, this.sunrise, this.sunset, this.now,
+  TidePainter(this.tideData, this.sunTime, this.now,
       this.animationProgress);
 
   @override
@@ -673,11 +692,11 @@ class TidePainter extends CustomPainter {
     // Draw background of the chart
     canvas.drawRect(Rect.fromPoints(zero, zero + conv.convert(24, maxValue)),
         paintBackgroundNight);
-    if (sunrise != null && sunset != null) {
+    if (sunTime != null) {
       canvas.drawRect(
           Rect.fromPoints(
-              zero + conv.convert(_dateTimeToDouble(sunrise!), minValue),
-              zero + conv.convert(_dateTimeToDouble(sunset!), maxValue)),
+              zero + conv.convert(_dateTimeToDouble(sunTime!.sunrise), minValue),
+              zero + conv.convert(_dateTimeToDouble(sunTime!.sunset), maxValue)),
           paintBackgroundDay);
     }
 
@@ -735,7 +754,8 @@ class TidePainter extends CustomPainter {
       tp.paint(canvas,
           zero + offset + Offset(-tp.width - tickLen - 1, -tp.height / 2));
     }
-    final unitTp = _prepareText(tideData.unit == Unit.feet ? "ft" : "m", fontSize: 8);
+    final unitTp =
+        _prepareText(tideData.unit == Unit.feet ? "ft" : "m", fontSize: 8);
     unitTp.paint(
         canvas,
         zero +
@@ -796,7 +816,7 @@ class TidePainter extends CustomPainter {
   String _doubleToString(double value, int maxDecimalDigits) {
     String s = value.toStringAsFixed(maxDecimalDigits);
     if (s.indexOf(".") > 0) {
-      s = s.replaceAll(RegExp(r'\.0*$'), "");
+      s = s.replaceAll(RegExp(r"\.0*$"), "");
     }
     if (s == "-0") {
       s = "0";
