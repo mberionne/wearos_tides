@@ -19,10 +19,6 @@
             id = "android";
             manager = "flutter";
         }
-        {
-            id = "ios";
-            manager = "ios";
-        }
     ];
   };
 }

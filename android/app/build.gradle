@@ -46,8 +46,8 @@ android {
         applicationId "com.mberionne.tides"
         minSdkVersion flutter.minSdkVersion
         targetSdkVersion 33 // flutter.targetSdkVersion
-        versionCode 113
-        versionName "1.0.13"
+        versionCode 120
+        versionName "1.1"
     }
 
    signingConfigs {
